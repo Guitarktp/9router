@@ -13,6 +13,7 @@ import ProviderIcon from "@/shared/components/ProviderIcon";
 import { getProviderIconSrc } from "@/shared/utils/providerIcon";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import {
+  AI_PROVIDERS,
   FREE_PROVIDERS,
   FREE_TIER_PROVIDERS,
   WEB_COOKIE_PROVIDERS,
@@ -25,6 +26,14 @@ import { useNotificationStore } from "@/store/notificationStore";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
 import AddCompatibleModal from "./components/AddCompatibleModal";
+import ProviderRoutingContextBar from "./components/ProviderRoutingContextBar";
+import {
+  GLOBAL_PROVIDER_VIEW,
+  ProviderSelectionError,
+  materializeActiveProviders,
+  nextActiveProviders,
+  saveActiveProviders,
+} from "./apiKeyRoutingState";
 
 function getStatusDisplay(connected, error, errorCode) {
   const parts = [];
@@ -94,10 +103,13 @@ function getConnectionErrorTag(connection) {
 }
 
 const APIKEY_INITIAL_VISIBLE = 20;
+const WEB_COOKIE_PROVIDER_IDS = new Set(Object.keys(WEB_COOKIE_PROVIDERS));
 
 export default function ProvidersPage() {
   const [connections, setConnections] = useState([]);
   const [providerNodes, setProviderNodes] = useState([]);
+  const [apiKeys, setApiKeys] = useState([]);
+  const [selectedView, setSelectedView] = useState(GLOBAL_PROVIDER_VIEW);
   const [loading, setLoading] = useState(true);
   const [showAllApikey, setShowAllApikey] = useState(false);
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
@@ -148,15 +160,18 @@ export default function ProvidersPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [connectionsRes, nodesRes] = await Promise.all([
+        const [connectionsRes, nodesRes, keysRes] = await Promise.all([
           fetch("/api/providers"),
           fetch("/api/provider-nodes"),
+          fetch("/api/keys"),
         ]);
         const connectionsData = await connectionsRes.json();
         const nodesData = await nodesRes.json();
+        const keysData = await keysRes.json();
         if (connectionsRes.ok)
           setConnections(connectionsData.connections || []);
         if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
+        if (keysRes.ok) setApiKeys(keysData.keys || []);
       } catch (error) {
         console.log("Error fetching data:", error);
       } finally {
@@ -253,6 +268,81 @@ export default function ProvidersPage() {
       notify.error("Provider test failed");
     } finally {
       setTestingMode(null);
+    }
+  };
+
+  const fullRoutingCatalogIds = [
+    ...new Set([
+      ...Object.values(AI_PROVIDERS)
+        .filter(
+          (provider) =>
+            !provider.hidden &&
+            !WEB_COOKIE_PROVIDER_IDS.has(provider.id) &&
+            (provider.serviceKinds ?? ["llm"]).includes("llm"),
+        )
+        .map((provider) => provider.id),
+      ...providerNodes
+        .filter((node) =>
+          ["openai-compatible", "anthropic-compatible"].includes(node.type),
+        )
+        .map((node) => node.id),
+    ]),
+  ].sort();
+  const routingCatalog = new Set(fullRoutingCatalogIds);
+  const selectedApiKey =
+    selectedView === GLOBAL_PROVIDER_VIEW
+      ? null
+      : apiKeys.find((key) => key.id === selectedView) || null;
+  const selectedActiveProviders = selectedApiKey
+    ? materializeActiveProviders(selectedApiKey, fullRoutingCatalogIds)
+    : [];
+  const selectedActiveProviderIds = new Set(selectedActiveProviders);
+  const isKeyRoutingMode = !!selectedApiKey;
+
+  const handleKeyRoutingToggle = async (providerId, nextActive) => {
+    if (!selectedApiKey) return;
+
+    let nextProviders;
+    try {
+      nextProviders = nextActiveProviders(
+        selectedApiKey,
+        fullRoutingCatalogIds,
+        providerId,
+        nextActive,
+      );
+    } catch (error) {
+      if (error instanceof ProviderSelectionError) {
+        notify.warning(
+          "At least one provider must remain active. Disable the API key instead.",
+        );
+        return;
+      }
+      throw error;
+    }
+
+    const previousApiKeys = apiKeys;
+    setApiKeys((current) =>
+      current.map((key) =>
+        key.id === selectedApiKey.id
+          ? { ...key, activeProviders: nextProviders }
+          : key,
+      ),
+    );
+
+    try {
+      const savedKey = await saveActiveProviders(
+        selectedApiKey.id,
+        nextProviders,
+      );
+      setApiKeys((current) =>
+        current.map((key) =>
+          key.id === savedKey.id ? { ...key, ...savedKey } : key,
+        ),
+      );
+      notify.success("Routing saved");
+    } catch (error) {
+      setApiKeys(previousApiKeys);
+      notify.error(error.message);
     }
   };
 
@@ -363,6 +453,14 @@ export default function ProvidersPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
+      <ProviderRoutingContextBar
+        apiKeys={apiKeys}
+        selectedView={selectedView}
+        onChange={setSelectedView}
+        activeCount={selectedActiveProviders.length}
+        totalCount={fullRoutingCatalogIds.length}
+      />
+
       {!hasAnyResult && (
         <div className="text-center py-8 border border-dashed border-border rounded-xl">
           <span className="material-symbols-outlined text-[32px] text-text-muted mb-2">
@@ -417,6 +515,11 @@ export default function ProvidersPage() {
                   onToggle={(active) =>
                     handleToggleProvider(info.id, "apikey", active)
                   }
+                  keyRoutingMode={isKeyRoutingMode}
+                  keyActive={selectedActiveProviderIds.has(info.id)}
+                  onKeyToggle={(active) =>
+                    handleKeyRoutingToggle(info.id, active)
+                  }
                 />
               ),
             )}
@@ -464,6 +567,9 @@ export default function ProvidersPage() {
                 stats={getProviderStats(key, authTypes)}
                 authType="oauth"
                 onToggle={(active) => handleToggleProvider(key, authTypes, active)}
+                keyRoutingMode={isKeyRoutingMode && routingCatalog.has(key)}
+                keyActive={selectedActiveProviderIds.has(key)}
+                onKeyToggle={(active) => handleKeyRoutingToggle(key, active)}
               />
             );
           })}
@@ -512,6 +618,9 @@ export default function ProvidersPage() {
                 onToggle={(active) =>
                   handleToggleProvider(key, freeAuthTypes, active)
                 }
+                keyRoutingMode={isKeyRoutingMode && routingCatalog.has(key)}
+                keyActive={selectedActiveProviderIds.has(key)}
+                onKeyToggle={(active) => handleKeyRoutingToggle(key, active)}
               />
             );
           })}
@@ -525,6 +634,9 @@ export default function ProvidersPage() {
                 stats={getProviderStats(key, freeAuthTypes)}
                 authType={Array.isArray(freeAuthTypes) ? (freeAuthTypes[0] ?? "apikey") : freeAuthTypes}
                 onToggle={(active) => handleToggleProvider(key, freeAuthTypes, active)}
+                keyRoutingMode={isKeyRoutingMode && routingCatalog.has(key)}
+                keyActive={selectedActiveProviderIds.has(key)}
+                onKeyToggle={(active) => handleKeyRoutingToggle(key, active)}
               />
             );
           })}
@@ -567,6 +679,9 @@ export default function ProvidersPage() {
               stats={getProviderStats(key, "apikey")}
               authType="apikey"
               onToggle={(active) => handleToggleProvider(key, "apikey", active)}
+              keyRoutingMode={isKeyRoutingMode && routingCatalog.has(key)}
+              keyActive={selectedActiveProviderIds.has(key)}
+              onKeyToggle={(active) => handleKeyRoutingToggle(key, active)}
             />
           ))}
         </div>
@@ -653,7 +768,16 @@ export default function ProvidersPage() {
   );
 }
 
-function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
+function ProviderCard({
+  providerId,
+  provider,
+  stats,
+  authType,
+  onToggle,
+  keyRoutingMode,
+  keyActive,
+  onKeyToggle,
+}) {
   const { connected, error, errorCode, errorTime, allDisabled } = stats;
   const isNoAuth = !!provider.noAuth;
 
@@ -721,7 +845,23 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {stats.total > 0 && (
+            {keyRoutingMode ? (
+              <div
+                title="Active for selected API key"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onKeyToggle(!keyActive);
+                }}
+              >
+                <span className="sr-only">Active for selected API key</span>
+                <Toggle
+                  size="sm"
+                  checked={keyActive}
+                  onChange={() => {}}
+                />
+              </div>
+            ) : stats.total > 0 ? (
               <div
                 className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
                 onClick={(e) => {
@@ -737,7 +877,7 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
                   title={allDisabled ? "Enable provider" : "Disable provider"}
                 />
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </Card>
@@ -761,6 +901,9 @@ ProviderCard.propTypes = {
   }).isRequired,
   authType: PropTypes.string,
   onToggle: PropTypes.func,
+  keyRoutingMode: PropTypes.bool,
+  keyActive: PropTypes.bool,
+  onKeyToggle: PropTypes.func,
 };
 
 function ApiKeyProviderCard({
@@ -769,6 +912,9 @@ function ApiKeyProviderCard({
   stats,
   authType,
   onToggle,
+  keyRoutingMode,
+  keyActive,
+  onKeyToggle,
 }) {
   const { connected, error, errorCode, errorTime, allDisabled } = stats;
   const isCompatible = providerId.startsWith(OPENAI_COMPATIBLE_PREFIX);
@@ -859,7 +1005,23 @@ function ApiKeyProviderCard({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {stats.total > 0 && (
+            {keyRoutingMode ? (
+              <div
+                title="Active for selected API key"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onKeyToggle(!keyActive);
+                }}
+              >
+                <span className="sr-only">Active for selected API key</span>
+                <Toggle
+                  size="sm"
+                  checked={keyActive}
+                  onChange={() => {}}
+                />
+              </div>
+            ) : stats.total > 0 ? (
               <div
                 className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
                 onClick={(e) => {
@@ -875,7 +1037,7 @@ function ApiKeyProviderCard({
                   title={allDisabled ? "Enable provider" : "Disable provider"}
                 />
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </Card>
@@ -900,6 +1062,9 @@ ApiKeyProviderCard.propTypes = {
   }).isRequired,
   authType: PropTypes.string,
   onToggle: PropTypes.func,
+  keyRoutingMode: PropTypes.bool,
+  keyActive: PropTypes.bool,
+  onKeyToggle: PropTypes.func,
 };
 
 function ProviderTestResultsView({ results }) {

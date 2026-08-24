@@ -5,8 +5,15 @@ import {
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
-import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getCustomModels, getModelAliases, getSettings } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
+import { extractApiKey } from "@/sse/services/auth.js";
+import {
+  filterModelCandidates,
+  isProviderActive,
+  resolveApiKeyRoutingContext,
+} from "@/sse/services/apiKeyRouting.js";
+import { errorResponse } from "open-sse/utils/error.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
@@ -246,6 +253,7 @@ export async function buildModelsList(kindFilter, options = {}) {
   // 9router instance's fetchCompatibleModelIds — skip dynamic fetch to break
   // cross-instance recursive loops.
   const skipDynamicFetch = options.skipDynamicFetch === true;
+  const routingContext = options.routingContext || { mode: "unrestricted" };
   let connections = [];
   try {
     connections = await getProviderConnections();
@@ -295,6 +303,8 @@ export async function buildModelsList(kindFilter, options = {}) {
   // Combos first (filtered by kind). Web combos expose `kind` so AI knows search vs fetch.
   for (const combo of combos) {
     if (!comboMatchesKinds(combo, kindFilter)) continue;
+    const activeCandidates = await filterModelCandidates(combo.models || [], routingContext);
+    if (routingContext.mode === "restricted" && activeCandidates.length === 0) continue;
     const entry = {
       id: combo.name,
       object: "model",
@@ -314,6 +324,7 @@ export async function buildModelsList(kindFilter, options = {}) {
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
       const providerId = aliasToProviderId[alias] || alias;
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
+      if (!isProviderActive(routingContext, providerId)) continue;
       for (const model of providerModels) {
         if (!kindFilter.includes(modelKind(model))) continue;
         if (isDisabled(alias, model.id)) continue;
@@ -331,6 +342,8 @@ export async function buildModelsList(kindFilter, options = {}) {
       if (!kindFilter.includes(LLM_KIND)) continue;
       const providerAlias = customModel.providerAlias;
       if (!providerAlias) continue;
+      const providerId = aliasToProviderId[providerAlias] || providerAlias;
+      if (!isProviderActive(routingContext, providerId)) continue;
 
       const modelId = String(customModel.id).trim();
       if (!modelId) continue;
@@ -344,6 +357,7 @@ export async function buildModelsList(kindFilter, options = {}) {
   } else {
     for (const [providerId, conn] of activeConnectionByProvider.entries()) {
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
+      if (!isProviderActive(routingContext, providerId)) continue;
 
       const staticAlias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
       const outputAlias = (
@@ -562,7 +576,15 @@ export async function GET(request) {
   try {
     // Detect cross-instance recursive /models fetch (another 9router fetching our /models)
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
-    const data = await buildModelsList([LLM_KIND], { skipDynamicFetch });
+    const apiKey = extractApiKey(request);
+    const settings = await getSettings();
+    const routingContext = await resolveApiKeyRoutingContext({
+      apiKey,
+      requireApiKey: !!settings.requireApiKey,
+    });
+    if (!routingContext.ok) return errorResponse(routingContext.status, routingContext.message);
+
+    const data = await buildModelsList([LLM_KIND], { skipDynamicFetch, routingContext });
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });

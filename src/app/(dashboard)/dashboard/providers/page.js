@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import {
   Card,
@@ -30,9 +30,9 @@ import ProviderRoutingContextBar from "./components/ProviderRoutingContextBar";
 import {
   GLOBAL_PROVIDER_VIEW,
   ProviderSelectionError,
+  createActiveProviderSaveCoordinator,
   materializeActiveProviders,
   nextActiveProviders,
-  saveActiveProviders,
 } from "./apiKeyRoutingState";
 
 function getStatusDisplay(connected, error, errorCode) {
@@ -109,6 +109,10 @@ export default function ProvidersPage() {
   const [connections, setConnections] = useState([]);
   const [providerNodes, setProviderNodes] = useState([]);
   const [apiKeys, setApiKeys] = useState([]);
+  const saveCoordinatorRef = useRef(null);
+  if (saveCoordinatorRef.current === null) {
+    saveCoordinatorRef.current = createActiveProviderSaveCoordinator();
+  }
   const [selectedView, setSelectedView] = useState(GLOBAL_PROVIDER_VIEW);
   const [loading, setLoading] = useState(true);
   const [showAllApikey, setShowAllApikey] = useState(false);
@@ -320,7 +324,6 @@ export default function ProvidersPage() {
       throw error;
     }
 
-    const previousApiKeys = apiKeys;
     setApiKeys((current) =>
       current.map((key) =>
         key.id === selectedApiKey.id
@@ -330,18 +333,14 @@ export default function ProvidersPage() {
     );
 
     try {
-      const savedKey = await saveActiveProviders(
-        selectedApiKey.id,
-        nextProviders,
-      );
-      setApiKeys((current) =>
-        current.map((key) =>
-          key.id === savedKey.id ? { ...key, ...savedKey } : key,
-        ),
-      );
-      notify.success("Routing saved");
+      const result = await saveCoordinatorRef.current.save({
+        keyId: selectedApiKey.id,
+        activeProviders: nextProviders,
+        previousKey: selectedApiKey,
+        setApiKeys,
+      });
+      if (result.status === "saved") notify.success("Routing saved");
     } catch (error) {
-      setApiKeys(previousApiKeys);
       notify.error(error.message);
     }
   };
@@ -847,18 +846,17 @@ function ProviderCard({
           <div className="flex shrink-0 items-center gap-2">
             {keyRoutingMode ? (
               <div
-                title="Active for selected API key"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   onKeyToggle(!keyActive);
                 }}
               >
-                <span className="sr-only">Active for selected API key</span>
                 <Toggle
                   size="sm"
                   checked={keyActive}
                   onChange={() => {}}
+                  aria-label="Active for selected API key"
                 />
               </div>
             ) : stats.total > 0 ? (
@@ -1007,18 +1005,17 @@ function ApiKeyProviderCard({
           <div className="flex shrink-0 items-center gap-2">
             {keyRoutingMode ? (
               <div
-                title="Active for selected API key"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   onKeyToggle(!keyActive);
                 }}
               >
-                <span className="sr-only">Active for selected API key</span>
                 <Toggle
                   size="sm"
                   checked={keyActive}
                   onChange={() => {}}
+                  aria-label="Active for selected API key"
                 />
               </div>
             ) : stats.total > 0 ? (

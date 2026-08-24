@@ -52,3 +52,48 @@ export async function saveActiveProviders(
 
   return payload.key;
 }
+
+export function createActiveProviderSaveCoordinator(
+  saveImpl = saveActiveProviders,
+) {
+  const versions = new Map();
+  const queues = new Map();
+
+  return {
+    save({ keyId, activeProviders, previousKey, setApiKeys }) {
+      const version = (versions.get(keyId) || 0) + 1;
+      versions.set(keyId, version);
+      const previousOperation = queues.get(keyId) || Promise.resolve();
+
+      const operation = previousOperation.then(async () => {
+        try {
+          const savedKey = await saveImpl(keyId, activeProviders);
+          if (versions.get(keyId) !== version) return { status: "stale" };
+
+          setApiKeys((current) =>
+            current.map((key) =>
+              key.id === keyId ? { ...key, ...savedKey } : key,
+            ),
+          );
+          return { status: "saved", key: savedKey };
+        } catch (error) {
+          if (versions.get(keyId) !== version) {
+            return { status: "stale", error };
+          }
+
+          setApiKeys((current) =>
+            current.map((key) => (key.id === keyId ? previousKey : key)),
+          );
+          throw error;
+        }
+      });
+
+      const queueTail = operation.catch(() => {});
+      queues.set(keyId, queueTail);
+      queueTail.finally(() => {
+        if (queues.get(keyId) === queueTail) queues.delete(keyId);
+      });
+      return operation;
+    },
+  };
+}

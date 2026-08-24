@@ -1,5 +1,16 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
+import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+
+function parseActiveProviders(value) {
+  if (value == null) return null;
+  const parsed = parseJson(value, null);
+  if (!Array.isArray(parsed) || parsed.some((id) => typeof id !== "string" || !id.trim())) {
+    console.warn("[DB][apiKeys] malformed activeProviders; using inherited mode");
+    return null;
+  }
+  return [...new Set(parsed)];
+}
 
 function rowToKey(row) {
   if (!row) return null;
@@ -9,6 +20,7 @@ function rowToKey(row) {
     name: row.name,
     machineId: row.machineId,
     isActive: row.isActive === 1 || row.isActive === true,
+    activeProviders: parseActiveProviders(row.activeProviders),
     createdAt: row.createdAt,
   };
 }
@@ -25,6 +37,12 @@ export async function getApiKeyById(id) {
   return rowToKey(row);
 }
 
+export async function getApiKeyByValue(key) {
+  if (!key) return null;
+  const db = await getAdapter();
+  return rowToKey(db.get("SELECT * FROM apiKeys WHERE key = ?", [key]));
+}
+
 export async function createApiKey(name, machineId) {
   if (!machineId) throw new Error("machineId is required");
   const db = await getAdapter();
@@ -36,16 +54,24 @@ export async function createApiKey(name, machineId) {
     key: result.key,
     machineId,
     isActive: true,
+    activeProviders: null,
     createdAt: new Date().toISOString(),
   };
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt]
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, activeProviders, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, null, apiKey.createdAt]
   );
   return apiKey;
 }
 
 export async function updateApiKey(id, data) {
+  if (Object.hasOwn(data, "activeProviders")) {
+    if (data.activeProviders !== null &&
+        (!Array.isArray(data.activeProviders) || data.activeProviders.length === 0 ||
+         data.activeProviders.some((provider) => typeof provider !== "string" || !provider.trim()))) {
+      throw new TypeError("activeProviders must be null or a non-empty array");
+    }
+  }
   const db = await getAdapter();
   let result = null;
   db.transaction(() => {
@@ -53,8 +79,8 @@ export async function updateApiKey(id, data) {
     if (!row) return;
     const merged = { ...rowToKey(row), ...data };
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ? WHERE id = ?`,
-      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, id]
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, activeProviders = ? WHERE id = ?`,
+      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.activeProviders === null ? null : stringifyJson(merged.activeProviders), id]
     );
     result = merged;
   });

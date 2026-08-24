@@ -97,4 +97,38 @@ describe("Schema migrations", () => {
     const idx = db2.all(`PRAGMA index_list(providerNodes)`).map(i => i.name);
     expect(idx).toContain("idx_pn_type");
   });
+
+  it("backs up and adds activeProviders to an existing API-key table", async () => {
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+    db.run(
+      `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt)
+       VALUES(?, ?, ?, ?, ?, ?)`,
+      ["legacy-key", "sk-legacy", "Legacy", "machine-1", 1, new Date().toISOString()],
+    );
+    db.exec("ALTER TABLE apiKeys DROP COLUMN activeProviders");
+    db.run(
+      `INSERT INTO _meta(key, value) VALUES('backupSchemaVersion', '1')
+       ON CONFLICT(key) DO UPDATE SET value = '1'`,
+    );
+    db.close?.();
+
+    delete global._dbAdapter;
+    vi.resetModules();
+    const { getAdapter: getAdapter2 } = await import("@/lib/db/driver.js");
+    const db2 = await getAdapter2();
+
+    const columns = db2.all("PRAGMA table_info(apiKeys)").map((column) => column.name);
+    expect(columns).toContain("activeProviders");
+    expect(db2.get(
+      "SELECT activeProviders FROM apiKeys WHERE id = ?",
+      ["legacy-key"],
+    ).activeProviders).toBeNull();
+
+    const backupRoot = path.join(tempDir, "db", "backups");
+    const schemaBackups = fs.readdirSync(backupRoot)
+      .filter((name) => name.startsWith("schema-1-to-2-"));
+    expect(schemaBackups).toHaveLength(1);
+    expect(fs.existsSync(path.join(backupRoot, schemaBackups[0], "data.sqlite"))).toBe(true);
+  });
 });

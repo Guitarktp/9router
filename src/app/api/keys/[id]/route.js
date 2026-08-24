@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
+import { ActiveProviderValidationError, normalizeActiveProviderInput } from "@/lib/apiKeyProviderCatalog";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -30,11 +31,20 @@ export async function PUT(request, { params }) {
 
     const updateData = {};
     if (isActive !== undefined) updateData.isActive = isActive;
+    if (Object.hasOwn(body, "activeProviders")) {
+      updateData.activeProviders = await normalizeActiveProviderInput(body.activeProviders);
+    }
 
     const updated = await updateApiKey(id, updateData);
 
     return NextResponse.json({ key: updated });
   } catch (error) {
+    if (error instanceof ActiveProviderValidationError) {
+      return NextResponse.json(
+        { error: { code: error.code, message: error.message } },
+        { status: error.status },
+      );
+    }
     console.log("Error updating key:", error);
     return NextResponse.json({ error: "Failed to update key" }, { status: 500 });
   }

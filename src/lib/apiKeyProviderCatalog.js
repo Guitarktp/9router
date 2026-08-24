@@ -1,12 +1,18 @@
 import { getProviderNodes } from "@/lib/localDb";
-import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers";
+import { AI_PROVIDERS, resolveProviderId, WEB_COOKIE_PROVIDERS } from "@/shared/constants/providers";
 
 const COMPATIBLE_NODE_TYPES = new Set(["openai-compatible", "anthropic-compatible"]);
+const WEB_COOKIE_PROVIDER_IDS = new Set(Object.keys(WEB_COOKIE_PROVIDERS));
 
 export function buildRoutableProviderIds(nodes = []) {
   const ids = new Set(
     Object.values(AI_PROVIDERS)
-      .filter((provider) => !provider.hidden && (provider.serviceKinds ?? ["llm"]).includes("llm"))
+      .filter(
+        (provider) =>
+          !provider.hidden &&
+          !WEB_COOKIE_PROVIDER_IDS.has(provider.id) &&
+          (provider.serviceKinds ?? ["llm"]).includes("llm"),
+      )
       .map((provider) => provider.id),
   );
 

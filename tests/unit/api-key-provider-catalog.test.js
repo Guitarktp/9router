@@ -38,6 +38,7 @@ describe("API-key provider catalog", () => {
     vi.clearAllMocks();
     mocks.getProviderNodes.mockResolvedValue([
       { id: "openai-compatible-team", type: "openai-compatible", prefix: "team" },
+      { id: "anthropic-compatible-research", type: "anthropic-compatible", prefix: "research" },
       { id: "custom-embedding-x", type: "custom-embedding", prefix: "embed" },
     ]);
   });
@@ -48,7 +49,22 @@ describe("API-key provider catalog", () => {
 
     expect(ids).toContain("claude");
     expect(ids).toContain("openai-compatible-team");
+    expect(ids).toContain("anthropic-compatible-research");
     expect(ids).not.toContain("custom-embedding-x");
+  });
+
+  it("excludes web-cookie providers that are not visible on the Providers page", async () => {
+    const { getRoutableProviderIds, normalizeActiveProviderInput } = await import("@/lib/apiKeyProviderCatalog.js");
+
+    await expect(normalizeActiveProviderInput(["grok-web"])).rejects.toMatchObject({
+      code: "invalid_active_providers",
+    });
+    await expect(normalizeActiveProviderInput(["perplexity-web"])).rejects.toMatchObject({
+      code: "invalid_active_providers",
+    });
+    expect(await getRoutableProviderIds()).not.toEqual(
+      expect.arrayContaining(["grok-web", "perplexity-web"]),
+    );
   });
 
   it("canonicalizes aliases and rejects duplicates after canonicalization", async () => {

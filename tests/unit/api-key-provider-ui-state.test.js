@@ -180,4 +180,100 @@ describe("API-key provider dashboard state", () => {
     await expect(newerOperation).resolves.toMatchObject({ status: "saved" });
     expect(keys).toEqual([secondOptimistic]);
   });
+
+  it("rolls two rejected same-key saves back to the last confirmed key", async () => {
+    const { createActiveProviderSaveCoordinator } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyRoutingState.js"
+    );
+    const firstSave = deferred();
+    const secondSave = deferred();
+    const saveImpl = vi
+      .fn()
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockImplementationOnce(() => secondSave.promise);
+    const coordinator = createActiveProviderSaveCoordinator(saveImpl);
+    const confirmed = { id: "keyA", name: "Confirmed", activeProviders: ["claude", "codex"] };
+    let keys = [confirmed];
+    const setApiKeys = (update) => {
+      keys = update(keys);
+    };
+
+    const firstOptimistic = { ...confirmed, activeProviders: ["claude"] };
+    setApiKeys(() => [firstOptimistic]);
+    const olderOperation = coordinator.save({
+      keyId: "keyA",
+      activeProviders: ["claude"],
+      previousKey: confirmed,
+      setApiKeys,
+    });
+
+    const secondOptimistic = { ...confirmed, activeProviders: ["codex"] };
+    setApiKeys(() => [secondOptimistic]);
+    const newerOperation = coordinator.save({
+      keyId: "keyA",
+      activeProviders: ["codex"],
+      previousKey: firstOptimistic,
+      setApiKeys,
+    });
+
+    await vi.waitFor(() => expect(saveImpl).toHaveBeenCalledTimes(1));
+    firstSave.reject(new Error("First save failed"));
+    await expect(olderOperation).resolves.toMatchObject({ status: "stale" });
+    await vi.waitFor(() => expect(saveImpl).toHaveBeenCalledTimes(2));
+
+    secondSave.reject(new Error("Second save failed"));
+    await expect(newerOperation).rejects.toThrow("Second save failed");
+    expect(keys).toEqual([confirmed]);
+  });
+
+  it("uses an older normalized success as rollback state for a newer failure", async () => {
+    const { createActiveProviderSaveCoordinator } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyRoutingState.js"
+    );
+    const firstSave = deferred();
+    const secondSave = deferred();
+    const saveImpl = vi
+      .fn()
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockImplementationOnce(() => secondSave.promise);
+    const coordinator = createActiveProviderSaveCoordinator(saveImpl);
+    const original = { id: "keyA", name: "Original", activeProviders: ["claude", "codex"] };
+    let keys = [original];
+    const setApiKeys = (update) => {
+      keys = update(keys);
+    };
+
+    const firstOptimistic = { ...original, activeProviders: ["claude"] };
+    setApiKeys(() => [firstOptimistic]);
+    const olderOperation = coordinator.save({
+      keyId: "keyA",
+      activeProviders: ["claude"],
+      previousKey: original,
+      setApiKeys,
+    });
+
+    const secondOptimistic = { ...original, activeProviders: ["codex"] };
+    setApiKeys(() => [secondOptimistic]);
+    const newerOperation = coordinator.save({
+      keyId: "keyA",
+      activeProviders: ["codex"],
+      previousKey: firstOptimistic,
+      setApiKeys,
+    });
+
+    const serverConfirmed = {
+      id: "keyA",
+      name: "Normalized by server",
+      activeProviders: ["claude"],
+    };
+    await vi.waitFor(() => expect(saveImpl).toHaveBeenCalledTimes(1));
+    firstSave.resolve(serverConfirmed);
+    await expect(olderOperation).resolves.toMatchObject({ status: "stale" });
+    expect(keys).toEqual([secondOptimistic]);
+    await vi.waitFor(() => expect(saveImpl).toHaveBeenCalledTimes(2));
+
+    secondSave.reject(new Error("Newer save failed"));
+    await expect(newerOperation).rejects.toThrow("Newer save failed");
+    expect(keys).toEqual([serverConfirmed]);
+  });
 });

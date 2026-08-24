@@ -1,15 +1,20 @@
 import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
-import { ActiveProviderValidationError, normalizeActiveProviderInput } from "@/lib/apiKeyProviderCatalog";
+import {
+  ActiveProviderValidationError,
+  intersectApiKeysWithCurrentCatalog,
+  normalizeActiveProviderInput,
+} from "@/lib/apiKeyProviderCatalog";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
-    const key = await getApiKeyById(id);
-    if (!key) {
+    const storedKey = await getApiKeyById(id);
+    if (!storedKey) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
+    const [key] = await intersectApiKeysWithCurrentCatalog([storedKey]);
     return NextResponse.json({ key });
   } catch (error) {
     console.log("Error fetching key:", error);

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   handleChatCore: vi.fn(),
   handleComboChat: vi.fn(),
   handleFusionChat: vi.fn(),
+  handleBypassRequest: vi.fn(),
   augmentModelsWithCapacityAdapter: vi.fn(),
   checkAndRefreshToken: vi.fn(),
 }));
@@ -57,7 +58,7 @@ vi.mock("open-sse/services/capacityAdapter.js", () => ({
 }));
 
 vi.mock("open-sse/utils/bypassHandler.js", () => ({
-  handleBypassRequest: vi.fn(() => null),
+  handleBypassRequest: mocks.handleBypassRequest,
 }));
 
 vi.mock("@/lib/headroom/detect", () => ({ DEFAULT_HEADROOM_URL: "http://headroom.test" }));
@@ -136,6 +137,7 @@ describe("API key chat provider routing", () => {
       }
       return allowed;
     });
+    mocks.handleBypassRequest.mockReturnValue(null);
     mocks.augmentModelsWithCapacityAdapter.mockImplementation((models) => models);
     mocks.getProviderCredentials.mockResolvedValue({
       connectionId: "c1",
@@ -162,6 +164,22 @@ describe("API key chat provider routing", () => {
 
     expect(response.status).toBe(403);
     expect(body.error.code).toBe("provider_not_active_for_api_key");
+    expect(mocks.getProviderCredentials).not.toHaveBeenCalled();
+  });
+
+  it("authorizes an inactive direct provider before considering a synthetic bypass", async () => {
+    mocks.resolveContext.mockResolvedValue(restricted(["claude"]));
+    mocks.getModelInfo.mockResolvedValue({ provider: "codex", model: "gpt-5" });
+    mocks.handleBypassRequest.mockReturnValue({
+      response: Response.json({ synthetic: true }),
+    });
+
+    const response = await handleChat(chatRequest({ model: "cx/gpt-5" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("provider_not_active_for_api_key");
+    expect(mocks.handleBypassRequest).not.toHaveBeenCalled();
     expect(mocks.getProviderCredentials).not.toHaveBeenCalled();
   });
 
@@ -193,6 +211,58 @@ describe("API key chat provider routing", () => {
 
     expect(response.status).toBe(403);
     expect(body.error.code).toBe("no_active_combo_providers_for_api_key");
+    expect(mocks.handleComboChat).not.toHaveBeenCalled();
+    expect(mocks.getProviderCredentials).not.toHaveBeenCalled();
+  });
+
+  it("authorizes an all-blocked combo before considering a synthetic bypass", async () => {
+    mocks.resolveContext.mockResolvedValue(restricted(["claude"]));
+    mocks.getComboModels.mockImplementation(async (model) => (
+      model === "combo" ? ["cx/a", "cx/b"] : null
+    ));
+    mocks.handleBypassRequest.mockReturnValue({
+      response: Response.json({ synthetic: true }),
+    });
+
+    const response = await handleChat(chatRequest({ model: "combo" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("no_active_combo_providers_for_api_key");
+    expect(mocks.handleBypassRequest).not.toHaveBeenCalled();
+    expect(mocks.handleComboChat).not.toHaveBeenCalled();
+    expect(mocks.getProviderCredentials).not.toHaveBeenCalled();
+  });
+
+  it("keeps an authorized direct bypass synthetic without selecting credentials", async () => {
+    mocks.resolveContext.mockResolvedValue(restricted(["codex"]));
+    mocks.getModelInfo.mockResolvedValue({ provider: "codex", model: "gpt-5" });
+    mocks.handleBypassRequest.mockReturnValue({
+      response: Response.json({ synthetic: true }),
+    });
+
+    const response = await handleChat(chatRequest({ model: "cx/gpt-5" }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ synthetic: true });
+    expect(mocks.handleBypassRequest).toHaveBeenCalledTimes(1);
+    expect(mocks.getProviderCredentials).not.toHaveBeenCalled();
+  });
+
+  it("keeps an authorized combo bypass synthetic without consuming combo rotation", async () => {
+    mocks.resolveContext.mockResolvedValue(restricted(["claude"]));
+    mocks.getComboModels.mockImplementation(async (model) => (
+      model === "combo" ? ["cc/a", "cc/b"] : null
+    ));
+    mocks.handleBypassRequest.mockReturnValue({
+      response: Response.json({ synthetic: true }),
+    });
+
+    const response = await handleChat(chatRequest({ model: "combo" }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ synthetic: true });
+    expect(mocks.handleBypassRequest).toHaveBeenCalledTimes(1);
     expect(mocks.handleComboChat).not.toHaveBeenCalled();
     expect(mocks.getProviderCredentials).not.toHaveBeenCalled();
   });
@@ -238,12 +308,24 @@ describe("API key chat provider routing", () => {
     mocks.getComboModels.mockImplementation(async (model) => (
       model === "fusion" ? ["cc/a", "cc/b"] : null
     ));
+    mocks.handleFusionChat.mockImplementation(async ({ body, models, handleSingleModel, judgeModel }) => {
+      for (const model of models) {
+        const panelResponse = await handleSingleModel(body, model, true);
+        if (!panelResponse.ok) return panelResponse;
+      }
+      return handleSingleModel(body, judgeModel, false);
+    });
 
     const response = await handleChat(chatRequest({ model: "fusion" }));
     const body = await response.json();
 
     expect(response.status).toBe(403);
     expect(body.error.code).toBe("provider_not_active_for_api_key");
-    expect(mocks.getProviderCredentials).not.toHaveBeenCalled();
+    expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(2);
+    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(1, "claude", expect.any(Set), "a");
+    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(2, "claude", expect.any(Set), "b");
+    expect(
+      mocks.getProviderCredentials.mock.calls.some(([provider]) => provider === "codex"),
+    ).toBe(false);
   });
 });

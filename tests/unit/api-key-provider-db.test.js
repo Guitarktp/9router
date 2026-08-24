@@ -5,8 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let tempDir;
 const originalDataDir = process.env.DATA_DIR;
+const shutdownEvents = ["beforeExit", "SIGINT", "SIGTERM", "exit"];
+let listenersBeforeTest;
 
 beforeEach(() => {
+  listenersBeforeTest = new Map(
+    shutdownEvents.map((event) => [event, new Set(process.listeners(event))]),
+  );
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "9router-key-providers-"));
   process.env.DATA_DIR = tempDir;
   delete global._dbAdapter;
@@ -16,6 +21,12 @@ beforeEach(() => {
 afterEach(() => {
   try { global._dbAdapter?.instance?.close?.(); } catch {}
   delete global._dbAdapter;
+  for (const event of shutdownEvents) {
+    const retained = listenersBeforeTest.get(event);
+    for (const listener of process.listeners(event)) {
+      if (!retained.has(listener)) process.off(event, listener);
+    }
+  }
   fs.rmSync(tempDir, { recursive: true, force: true });
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;

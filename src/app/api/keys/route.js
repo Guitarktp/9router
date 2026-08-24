@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getApiKeys, createApiKey } from "@/lib/localDb";
+import { intersectApiKeysWithCurrentCatalog } from "@/lib/apiKeyProviderCatalog";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 
 export const dynamic = "force-dynamic";
@@ -7,7 +8,7 @@ export const dynamic = "force-dynamic";
 // GET /api/keys - List API keys
 export async function GET() {
   try {
-    const keys = await getApiKeys();
+    const keys = await intersectApiKeysWithCurrentCatalog(await getApiKeys());
     return NextResponse.json({ keys });
   } catch (error) {
     console.log("Error fetching keys:", error);

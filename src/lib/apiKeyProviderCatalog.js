@@ -1,5 +1,6 @@
 import { getProviderNodes } from "@/lib/localDb";
-import { AI_PROVIDERS, resolveProviderId, WEB_COOKIE_PROVIDERS } from "@/shared/constants/providers";
+import { AI_PROVIDERS, WEB_COOKIE_PROVIDERS } from "@/shared/constants/providers";
+import { resolveProviderAlias } from "open-sse/services/model.js";
 
 const COMPATIBLE_NODE_TYPES = new Set(["openai-compatible", "anthropic-compatible"]);
 const WEB_COOKIE_PROVIDER_IDS = new Set(Object.keys(WEB_COOKIE_PROVIDERS));
@@ -25,6 +26,22 @@ export function buildRoutableProviderIds(nodes = []) {
 
 export async function getRoutableProviderIds() {
   return buildRoutableProviderIds(await getProviderNodes());
+}
+
+export async function intersectApiKeysWithCurrentCatalog(keys) {
+  const keyList = Array.isArray(keys) ? keys : [];
+  if (!keyList.some((key) => Array.isArray(key?.activeProviders))) {
+    return keyList;
+  }
+
+  const routableIds = new Set(await getRoutableProviderIds());
+  return keyList.map((key) => {
+    if (!Array.isArray(key?.activeProviders)) return key;
+    return {
+      ...key,
+      activeProviders: key.activeProviders.filter((id) => routableIds.has(id)),
+    };
+  });
 }
 
 export class ActiveProviderValidationError extends Error {
@@ -53,7 +70,7 @@ export async function normalizeActiveProviderInput(value) {
       throw new ActiveProviderValidationError("invalid_active_providers", "Provider IDs must be non-empty strings");
     }
 
-    const canonicalId = resolveProviderId(providerId.trim());
+    const canonicalId = resolveProviderAlias(providerId.trim());
     if (!routableIds.has(canonicalId)) {
       throw new ActiveProviderValidationError("invalid_active_providers", `Unknown provider: ${providerId}`);
     }

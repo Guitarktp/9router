@@ -286,4 +286,18 @@ describe("dashboard guard helpers", () => {
 
     expect(__test__.extractApiKey(apiRequest)).toBe("header-key");
   });
+
+  it("extracts x-goog-api-key before the query key", () => {
+    const apiRequest = request("/v1beta/models?key=query-key", {
+      "x-goog-api-key": "google-key",
+    });
+
+    expect(__test__.extractApiKey(apiRequest)).toBe("google-key");
+  });
+
+  it("falls back to the query key when no key header is present", () => {
+    const apiRequest = request("/v1beta/models?key=query-key");
+
+    expect(__test__.extractApiKey(apiRequest)).toBe("query-key");
+  });
 });

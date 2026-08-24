@@ -58,9 +58,11 @@ export function createActiveProviderSaveCoordinator(
 ) {
   const versions = new Map();
   const queues = new Map();
+  const confirmedKeys = new Map();
 
   return {
     save({ keyId, activeProviders, previousKey, setApiKeys }) {
+      if (!confirmedKeys.has(keyId)) confirmedKeys.set(keyId, previousKey);
       const version = (versions.get(keyId) || 0) + 1;
       versions.set(keyId, version);
       const previousOperation = queues.get(keyId) || Promise.resolve();
@@ -68,6 +70,7 @@ export function createActiveProviderSaveCoordinator(
       const operation = previousOperation.then(async () => {
         try {
           const savedKey = await saveImpl(keyId, activeProviders);
+          confirmedKeys.set(keyId, savedKey);
           if (versions.get(keyId) !== version) return { status: "stale" };
 
           setApiKeys((current) =>
@@ -81,8 +84,9 @@ export function createActiveProviderSaveCoordinator(
             return { status: "stale", error };
           }
 
+          const confirmedKey = confirmedKeys.get(keyId) || previousKey;
           setApiKeys((current) =>
-            current.map((key) => (key.id === keyId ? previousKey : key)),
+            current.map((key) => (key.id === keyId ? confirmedKey : key)),
           );
           throw error;
         }

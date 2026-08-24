@@ -77,4 +77,36 @@ describe("API-key routing policy", () => {
       },
     });
   });
+
+  it("allows a route-specific error type without changing the default code", async () => {
+    const { buildErrorBody } = await import("../../open-sse/utils/error.js");
+
+    expect(buildErrorBody(403, "Provider disabled", {
+      type: "api_key_provider_policy_error",
+    })).toEqual({
+      error: {
+        message: "Provider disabled",
+        type: "api_key_provider_policy_error",
+        code: "insufficient_quota",
+      },
+    });
+  });
+
+  it("forwards error type and code overrides through errorResponse", async () => {
+    const { errorResponse } = await import("../../open-sse/utils/error.js");
+
+    const response = errorResponse(403, "Provider disabled", {
+      type: "api_key_provider_policy_error",
+      code: "provider_not_active_for_api_key",
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        message: "Provider disabled",
+        type: "api_key_provider_policy_error",
+        code: "provider_not_active_for_api_key",
+      },
+    });
+  });
 });

@@ -79,19 +79,36 @@ export async function handleChat(request, clientRawRequest = null) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   }
 
-  // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
+  // Resolve and authorize the requested direct provider or combo before a
+  // synthetic CLI response. This preflight does not consume rotation state or
+  // select credentials.
+  const comboModels = await getComboModels(modelStr);
+  let authorizedComboModels = comboModels;
+  let requestedModelInfo = null;
+  if (comboModels) {
+    authorizedComboModels = await filterModelCandidates(comboModels, routingContext);
+    if (authorizedComboModels.length === 0) {
+      return emptyComboResponse(routingContext, modelStr);
+    }
+  } else {
+    requestedModelInfo = await getModelInfo(modelStr);
+    if (requestedModelInfo.provider && !isProviderActive(routingContext, requestedModelInfo.provider)) {
+      return inactiveProviderResponse(routingContext, requestedModelInfo.provider);
+    }
+  }
+
+  // Bypass naming/warmup requests after policy preflight but before combo
+  // rotation and credential selection.
   const userAgent = request?.headers?.get("user-agent") || "";
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
   if (bypassResponse) return bypassResponse.response || bypassResponse;
 
   const requiredCapabilities = detectRequiredCapabilities(body);
 
-  // Check if model is a combo (has multiple models with fallback)
-  const comboModels = await getComboModels(modelStr);
   if (comboModels) {
     return handleResolvedCombo({
       body,
-      comboModels,
+      comboModels: authorizedComboModels,
       comboName: modelStr,
       clientRawRequest,
       request,
@@ -99,16 +116,12 @@ export async function handleChat(request, clientRawRequest = null) {
       routingContext,
       settings,
       requiredCapabilities,
+      comboModelsAreAuthorized: true,
     });
   }
 
   // Single model request — may still switch to a capacity-adapter model if the
   // target lacks a capability the request needs (e.g. no vision, request has an image).
-  const requestedModelInfo = await getModelInfo(modelStr);
-  if (requestedModelInfo.provider && !isProviderActive(routingContext, requestedModelInfo.provider)) {
-    return inactiveProviderResponse(routingContext, requestedModelInfo.provider);
-  }
-
   const soloAugmented = await filterModelCandidates(
     augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings),
     routingContext,
@@ -158,8 +171,11 @@ async function handleResolvedCombo({
   routingContext,
   settings,
   requiredCapabilities,
+  comboModelsAreAuthorized = false,
 }) {
-  const allowedComboModels = await filterModelCandidates(comboModels, routingContext);
+  const allowedComboModels = comboModelsAreAuthorized
+    ? comboModels
+    : await filterModelCandidates(comboModels, routingContext);
   if (allowedComboModels.length === 0) {
     return emptyComboResponse(routingContext, comboName);
   }

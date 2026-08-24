@@ -2,10 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getProviderNodes: vi.fn(),
+  getApiKeys: vi.fn(),
+  createApiKey: vi.fn(),
   getApiKeyById: vi.fn(),
   updateApiKey: vi.fn(),
   deleteApiKey: vi.fn(),
   normalizeActiveProviderInput: vi.fn(),
+  intersectApiKeysWithCurrentCatalog: vi.fn(async (keys) => keys),
   ActiveProviderValidationError: class ActiveProviderValidationError extends Error {
     constructor(code, message) {
       super(message);
@@ -18,6 +21,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/localDb", () => ({
   getProviderNodes: mocks.getProviderNodes,
+  getApiKeys: mocks.getApiKeys,
+  createApiKey: mocks.createApiKey,
   getApiKeyById: mocks.getApiKeyById,
   updateApiKey: mocks.updateApiKey,
   deleteApiKey: mocks.deleteApiKey,
@@ -75,6 +80,32 @@ describe("API-key provider catalog", () => {
     });
   });
 
+  it("canonicalizes registry secondary aliases in request order", async () => {
+    const { normalizeActiveProviderInput } = await import("@/lib/apiKeyProviderCatalog.js");
+
+    await expect(normalizeActiveProviderInput([
+      "openai-compatible-team",
+      "kmc",
+      "grok-build",
+      "anthropic-compatible-research",
+    ])).resolves.toEqual([
+      "openai-compatible-team",
+      "kimi",
+      "grok-cli",
+      "anthropic-compatible-research",
+    ]);
+  });
+
+  it("rejects duplicates collapsed through a registry secondary alias", async () => {
+    const { normalizeActiveProviderInput } = await import("@/lib/apiKeyProviderCatalog.js");
+
+    await expect(normalizeActiveProviderInput(["kimi", "kmc"]))
+      .rejects.toMatchObject({
+        code: "invalid_active_providers",
+        message: "Duplicate provider: kimi",
+      });
+  });
+
   it("rejects empty and unknown provider lists", async () => {
     const { normalizeActiveProviderInput } = await import("@/lib/apiKeyProviderCatalog.js");
 
@@ -87,10 +118,11 @@ describe("API-key provider catalog", () => {
   });
 });
 
-describe("PUT /api/keys/[id]", () => {
+describe("API-key routes", () => {
   async function loadPut() {
     vi.doMock("@/lib/apiKeyProviderCatalog.js", () => ({
       normalizeActiveProviderInput: mocks.normalizeActiveProviderInput,
+      intersectApiKeysWithCurrentCatalog: mocks.intersectApiKeysWithCurrentCatalog,
       ActiveProviderValidationError: mocks.ActiveProviderValidationError,
     }));
     const { PUT } = await import("@/app/api/keys/[id]/route.js");
@@ -99,9 +131,51 @@ describe("PUT /api/keys/[id]", () => {
 
   beforeEach(() => {
     vi.resetModules();
+    vi.doUnmock("@/lib/apiKeyProviderCatalog.js");
     vi.clearAllMocks();
+    mocks.getProviderNodes.mockResolvedValue([
+      { id: "openai-compatible-team", type: "openai-compatible", prefix: "team" },
+    ]);
     mocks.getApiKeyById.mockResolvedValue({ id: "key-1", isActive: true });
     mocks.updateApiKey.mockImplementation(async (id, updateData) => ({ id, ...updateData }));
+  });
+
+  it("intersects API-key list reads with the current catalog", async () => {
+    mocks.getApiKeys.mockResolvedValue([
+      { id: "inherited", activeProviders: null },
+      { id: "stale", activeProviders: ["removed-provider"] },
+      {
+        id: "mixed",
+        activeProviders: ["claude", "removed-provider", "openai-compatible-team"],
+      },
+    ]);
+    const { GET } = await import("@/app/api/keys/route.js");
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(body.keys.map((key) => key.activeProviders)).toEqual([
+      null,
+      [],
+      ["claude", "openai-compatible-team"],
+    ]);
+  });
+
+  it("keeps a stale customized single-key read restricted with an empty list", async () => {
+    mocks.getApiKeyById.mockResolvedValue({
+      id: "stale",
+      isActive: true,
+      activeProviders: ["removed-provider"],
+    });
+    const { GET } = await import("@/app/api/keys/[id]/route.js");
+
+    const response = await GET(new Request("http://localhost/api/keys/stale"), {
+      params: Promise.resolve({ id: "stale" }),
+    });
+
+    await expect(response.json()).resolves.toMatchObject({
+      key: { id: "stale", activeProviders: [] },
+    });
   });
 
   it("passes canonical active providers to the repository", async () => {

@@ -2,10 +2,10 @@ import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 
-function parseActiveProviders(value) {
+export function parseActiveProviders(value) {
   if (value == null) return null;
   const parsed = parseJson(value, null);
-  if (!Array.isArray(parsed) || parsed.some((id) => typeof id !== "string" || !id.trim())) {
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.some((id) => typeof id !== "string" || !id.trim())) {
     console.warn("[DB][apiKeys] malformed activeProviders; using inherited mode");
     return null;
   }

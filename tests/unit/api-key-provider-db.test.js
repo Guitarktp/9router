@@ -53,4 +53,36 @@ describe("API-key provider persistence", () => {
     adapter.run("UPDATE apiKeys SET activeProviders = ? WHERE id = ?", ["{bad", key.id]);
     expect((await db.getApiKeyById(key.id)).activeProviders).toBeNull();
   });
+
+  it("normalizes malformed valid provider shapes on reads and export", async () => {
+    const db = await import("@/lib/db/index.js");
+    const keys = await Promise.all([
+      db.createApiKey("object", "machine-1"),
+      db.createApiKey("empty", "machine-1"),
+      db.createApiKey("blank", "machine-1"),
+    ]);
+    const adapter = await (await import("@/lib/db/driver.js")).getAdapter();
+    for (const [key, value] of [[keys[0], "{}"], [keys[1], "[]"], [keys[2], '[""]']]) {
+      adapter.run("UPDATE apiKeys SET activeProviders = ? WHERE id = ?", [value, key.id]);
+    }
+
+    await expect(Promise.all(keys.map((key) => db.getApiKeyById(key.id))))
+      .resolves.toEqual(keys.map((key) => expect.objectContaining({ id: key.id, activeProviders: null })));
+    expect((await db.exportDb()).apiKeys.map((key) => key.activeProviders)).toEqual([null, null, null]);
+  });
+
+  it("normalizes malformed provider shapes to SQL NULL during import", async () => {
+    const db = await import("@/lib/db/index.js");
+    await db.importDb({
+      apiKeys: [
+        { id: "import-object", key: "sk-import-object", activeProviders: {} },
+        { id: "import-empty", key: "sk-import-empty", activeProviders: [] },
+        { id: "import-blank", key: "sk-import-blank", activeProviders: [""] },
+      ],
+    });
+    const adapter = await (await import("@/lib/db/driver.js")).getAdapter();
+    const rows = adapter.all("SELECT activeProviders FROM apiKeys ORDER BY id");
+    expect(rows.map((row) => row.activeProviders)).toEqual([null, null, null]);
+    expect((await db.getApiKeys()).map((key) => key.activeProviders)).toEqual([null, null, null]);
+  });
 });

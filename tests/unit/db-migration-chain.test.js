@@ -64,7 +64,11 @@ describe("Schema migrations", () => {
     // Simulate user upgrading: place legacy JSON in DATA_DIR before first boot
     const legacy = {
       settings: { foo: "legacy-value" },
-      apiKeys: [{ id: "k1", key: "abc", name: "test", createdAt: new Date().toISOString() }],
+      apiKeys: [
+        { id: "k1", key: "abc", name: "object", activeProviders: {}, createdAt: new Date().toISOString() },
+        { id: "k2", key: "def", name: "empty", activeProviders: [], createdAt: new Date().toISOString() },
+        { id: "k3", key: "ghi", name: "blank", activeProviders: [""], createdAt: new Date().toISOString() },
+      ],
       modelAliases: { "gpt-4": "gpt-4-turbo" },
     };
     fs.writeFileSync(path.join(tempDir, "db.json"), JSON.stringify(legacy));
@@ -76,8 +80,8 @@ describe("Schema migrations", () => {
     expect(JSON.parse(settings.data)).toEqual({ foo: "legacy-value" });
 
     const keys = db.all(`SELECT * FROM apiKeys`);
-    expect(keys).toHaveLength(1);
-    expect(keys[0].key).toBe("abc");
+    expect(keys).toHaveLength(3);
+    expect(keys.map((key) => key.activeProviders)).toEqual([null, null, null]);
 
     const aliases = db.all(`SELECT * FROM kv WHERE scope='modelAliases'`);
     expect(aliases).toHaveLength(1);

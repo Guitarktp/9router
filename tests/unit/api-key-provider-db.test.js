@@ -78,11 +78,12 @@ describe("API-key provider persistence", () => {
         { id: "import-object", key: "sk-import-object", activeProviders: {} },
         { id: "import-empty", key: "sk-import-empty", activeProviders: [] },
         { id: "import-blank", key: "sk-import-blank", activeProviders: [""] },
+        { id: "import-stringified", key: "sk-import-stringified", activeProviders: '["claude"]' },
       ],
     });
     const adapter = await (await import("@/lib/db/driver.js")).getAdapter();
     const rows = adapter.all("SELECT activeProviders FROM apiKeys ORDER BY id");
-    expect(rows.map((row) => row.activeProviders)).toEqual([null, null, null]);
-    expect((await db.getApiKeys()).map((key) => key.activeProviders)).toEqual([null, null, null]);
+    expect(rows.map((row) => row.activeProviders)).toEqual([null, null, null, null]);
+    expect((await db.getApiKeys()).map((key) => key.activeProviders)).toEqual([null, null, null, null]);
   });
 });

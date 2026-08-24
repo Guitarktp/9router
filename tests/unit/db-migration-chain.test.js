@@ -68,6 +68,7 @@ describe("Schema migrations", () => {
         { id: "k1", key: "abc", name: "object", activeProviders: {}, createdAt: new Date().toISOString() },
         { id: "k2", key: "def", name: "empty", activeProviders: [], createdAt: new Date().toISOString() },
         { id: "k3", key: "ghi", name: "blank", activeProviders: [""], createdAt: new Date().toISOString() },
+        { id: "k4", key: "jkl", name: "stringified", activeProviders: '["claude"]', createdAt: new Date().toISOString() },
       ],
       modelAliases: { "gpt-4": "gpt-4-turbo" },
     };
@@ -80,8 +81,8 @@ describe("Schema migrations", () => {
     expect(JSON.parse(settings.data)).toEqual({ foo: "legacy-value" });
 
     const keys = db.all(`SELECT * FROM apiKeys`);
-    expect(keys).toHaveLength(3);
-    expect(keys.map((key) => key.activeProviders)).toEqual([null, null, null]);
+    expect(keys).toHaveLength(4);
+    expect(keys.map((key) => key.activeProviders)).toEqual([null, null, null, null]);
 
     const aliases = db.all(`SELECT * FROM kv WHERE scope='modelAliases'`);
     expect(aliases).toHaveLength(1);

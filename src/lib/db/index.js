@@ -137,7 +137,9 @@ export async function importDb(payload) {
       );
     }
     for (const k of payload.apiKeys || []) {
-      const activeProviders = parseActiveProviders(k.activeProviders);
+      const activeProviders = Array.isArray(k.activeProviders)
+        ? parseActiveProviders(k.activeProviders)
+        : null;
       db.run(
         `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, activeProviders, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?)`,
         [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, activeProviders === null ? null : stringifyJson(activeProviders), k.createdAt || new Date().toISOString()]

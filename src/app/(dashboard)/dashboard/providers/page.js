@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { Suspense, useState, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import {
   Card,
@@ -21,6 +21,7 @@ import {
   ANTHROPIC_COMPATIBLE_PREFIX,
 } from "@/shared/constants/providers";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
@@ -34,6 +35,10 @@ import {
   materializeActiveProviders,
   nextActiveProviders,
 } from "./apiKeyRoutingState";
+import {
+  buildProviderDetailHref,
+  resolveProviderView,
+} from "./providerViewContext";
 
 function getStatusDisplay(connected, error, errorCode) {
   const parts = [];
@@ -106,6 +111,23 @@ const APIKEY_INITIAL_VISIBLE = 20;
 const WEB_COOKIE_PROVIDER_IDS = new Set(Object.keys(WEB_COOKIE_PROVIDERS));
 
 export default function ProvidersPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex flex-col gap-8">
+          <CardSkeleton />
+          <CardSkeleton />
+        </div>
+      }
+    >
+      <ProvidersContent />
+    </Suspense>
+  );
+}
+
+function ProvidersContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [connections, setConnections] = useState([]);
   const [providerNodes, setProviderNodes] = useState([]);
   const [apiKeys, setApiKeys] = useState([]);
@@ -113,7 +135,6 @@ export default function ProvidersPage() {
   if (saveCoordinatorRef.current === null) {
     saveCoordinatorRef.current = createActiveProviderSaveCoordinator();
   }
-  const [selectedView, setSelectedView] = useState(GLOBAL_PROVIDER_VIEW);
   const [loading, setLoading] = useState(true);
   const [showAllApikey, setShowAllApikey] = useState(false);
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
@@ -125,6 +146,18 @@ export default function ProvidersPage() {
   const searchQuery = useHeaderSearchStore((s) => s.query);
   const registerSearch = useHeaderSearchStore((s) => s.register);
   const unregisterSearch = useHeaderSearchStore((s) => s.unregister);
+  const requestedView = searchParams.get("view") || GLOBAL_PROVIDER_VIEW;
+  const selectedView = loading
+    ? GLOBAL_PROVIDER_VIEW
+    : resolveProviderView(requestedView, apiKeys);
+
+  const handleSelectedViewChange = (nextView) => {
+    const href =
+      nextView === GLOBAL_PROVIDER_VIEW
+        ? "/dashboard/providers"
+        : `/dashboard/providers?view=${encodeURIComponent(nextView)}`;
+    router.replace(href, { scroll: false });
+  };
 
   useEffect(() => {
     registerSearch("Search providers...");
@@ -455,7 +488,7 @@ export default function ProvidersPage() {
       <ProviderRoutingContextBar
         apiKeys={apiKeys}
         selectedView={selectedView}
-        onChange={setSelectedView}
+        onChange={handleSelectedViewChange}
         activeCount={selectedActiveProviders.length}
         totalCount={fullRoutingCatalogIds.length}
       />
@@ -509,6 +542,7 @@ export default function ProvidersPage() {
                   key={info.id}
                   providerId={info.id}
                   provider={info}
+                  detailHref={buildProviderDetailHref(info.id, selectedView)}
                   stats={getProviderStats(info.id, "apikey")}
                   authType="compatible"
                   onToggle={(active) =>
@@ -563,6 +597,7 @@ export default function ProvidersPage() {
                 key={key}
                 providerId={key}
                 provider={info}
+                detailHref={buildProviderDetailHref(key, selectedView)}
                 stats={getProviderStats(key, authTypes)}
                 authType="oauth"
                 onToggle={(active) => handleToggleProvider(key, authTypes, active)}
@@ -612,6 +647,7 @@ export default function ProvidersPage() {
                 key={key}
                 providerId={key}
                 provider={info}
+                detailHref={buildProviderDetailHref(key, selectedView)}
                 stats={getProviderStats(key, freeAuthTypes)}
                 authType="free"
                 onToggle={(active) =>
@@ -630,6 +666,7 @@ export default function ProvidersPage() {
                 key={key}
                 providerId={key}
                 provider={info}
+                detailHref={buildProviderDetailHref(key, selectedView)}
                 stats={getProviderStats(key, freeAuthTypes)}
                 authType={Array.isArray(freeAuthTypes) ? (freeAuthTypes[0] ?? "apikey") : freeAuthTypes}
                 onToggle={(active) => handleToggleProvider(key, freeAuthTypes, active)}
@@ -675,6 +712,7 @@ export default function ProvidersPage() {
               key={key}
               providerId={key}
               provider={info}
+              detailHref={buildProviderDetailHref(key, selectedView)}
               stats={getProviderStats(key, "apikey")}
               authType="apikey"
               onToggle={(active) => handleToggleProvider(key, "apikey", active)}
@@ -770,6 +808,7 @@ export default function ProvidersPage() {
 function ProviderCard({
   providerId,
   provider,
+  detailHref,
   stats,
   authType,
   onToggle,
@@ -794,7 +833,7 @@ function ProviderCard({
   };
 
   return (
-    <Link href={`/dashboard/providers/${providerId}`} className="group min-w-0">
+    <Link href={detailHref} className="group min-w-0">
       <Card
         padding="xs"
         className={`h-full hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors cursor-pointer ${allDisabled ? "opacity-50" : ""}`}
@@ -891,6 +930,7 @@ ProviderCard.propTypes = {
     color: PropTypes.string,
     textIcon: PropTypes.string,
   }).isRequired,
+  detailHref: PropTypes.string.isRequired,
   stats: PropTypes.shape({
     connected: PropTypes.number,
     error: PropTypes.number,
@@ -907,6 +947,7 @@ ProviderCard.propTypes = {
 function ApiKeyProviderCard({
   providerId,
   provider,
+  detailHref,
   stats,
   authType,
   onToggle,
@@ -943,7 +984,7 @@ function ApiKeyProviderCard({
   };
 
   return (
-    <Link href={`/dashboard/providers/${providerId}`} className="group min-w-0">
+    <Link href={detailHref} className="group min-w-0">
       <Card
         padding="xs"
         className={`h-full hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors cursor-pointer ${allDisabled ? "opacity-50" : ""}`}
@@ -1051,6 +1092,7 @@ ApiKeyProviderCard.propTypes = {
     textIcon: PropTypes.string,
     apiType: PropTypes.string,
   }).isRequired,
+  detailHref: PropTypes.string.isRequired,
   stats: PropTypes.shape({
     connected: PropTypes.number,
     error: PropTypes.number,

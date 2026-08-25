@@ -7,7 +7,10 @@ import { getMetaSync, setMetaSync } from "./helpers/metaStore.js";
 import { makeBackupDir, backupFile, backupDbLite, pruneOldBackups } from "./backup.js";
 import { getAppVersion } from "./version.js";
 import { stringifyJson } from "./helpers/jsonCol.js";
-import { parseActiveProviders, parseActiveConnections } from "./repos/apiKeysRepo.js";
+import {
+  parseActiveProviders,
+  parseActiveConnectionsForImport,
+} from "./repos/apiKeysRepo.js";
 
 // Marker file: prevents re-importing legacy JSON when user wipes data.sqlite.
 const MIGRATED_MARKER = path.join(DB_DIR, ".migrated-from-json");
@@ -145,7 +148,10 @@ function importLegacyMain(adapter, data) {
     const activeProviders = Array.isArray(k.activeProviders)
       ? parseActiveProviders(k.activeProviders)
       : null;
-    const activeConnections = parseActiveConnections(k.activeConnections);
+    const activeConnections = parseActiveConnectionsForImport(
+      k.activeConnections,
+      data.providerConnections || [],
+    );
     adapter.run(
       `INSERT OR REPLACE INTO apiKeys(
         id, key, name, machineId, isActive, activeProviders, activeConnections, createdAt

@@ -1,7 +1,11 @@
 // Public API barrel — all DB functions
 import { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
-import { parseActiveProviders, parseActiveConnections } from "./repos/apiKeysRepo.js";
+import {
+  parseActiveProviders,
+  parseActiveConnections,
+  parseActiveConnectionsForImport,
+} from "./repos/apiKeysRepo.js";
 
 // Settings
 export {
@@ -140,7 +144,10 @@ export async function importDb(payload) {
       const activeProviders = Array.isArray(k.activeProviders)
         ? parseActiveProviders(k.activeProviders)
         : null;
-      const activeConnections = parseActiveConnections(k.activeConnections);
+      const activeConnections = parseActiveConnectionsForImport(
+        k.activeConnections,
+        payload.providerConnections || [],
+      );
       db.run(
         `INSERT OR REPLACE INTO apiKeys(
           id, key, name, machineId, isActive, activeProviders, activeConnections, createdAt

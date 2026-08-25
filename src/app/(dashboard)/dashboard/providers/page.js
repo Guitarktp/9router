@@ -37,8 +37,11 @@ import {
 } from "./apiKeyRoutingState";
 import {
   buildProviderDetailHref,
-  resolveProviderView,
 } from "./providerViewContext";
+import {
+  loadProviderLandingKeyContext,
+  resolveProviderLandingViewState,
+} from "./providerLandingKeyContext";
 
 function getStatusDisplay(connected, error, errorCode) {
   const parts = [];
@@ -131,6 +134,10 @@ function ProvidersContent() {
   const [connections, setConnections] = useState([]);
   const [providerNodes, setProviderNodes] = useState([]);
   const [apiKeys, setApiKeys] = useState([]);
+  const [keyContextLoad, setKeyContextLoad] = useState({
+    ok: false,
+    error: null,
+  });
   const saveCoordinatorRef = useRef(null);
   if (saveCoordinatorRef.current === null) {
     saveCoordinatorRef.current = createActiveProviderSaveCoordinator();
@@ -147,9 +154,11 @@ function ProvidersContent() {
   const registerSearch = useHeaderSearchStore((s) => s.register);
   const unregisterSearch = useHeaderSearchStore((s) => s.unregister);
   const requestedView = searchParams.get("view") || GLOBAL_PROVIDER_VIEW;
-  const selectedView = loading
-    ? GLOBAL_PROVIDER_VIEW
-    : resolveProviderView(requestedView, apiKeys);
+  const { selectedView, keyContextUnavailable } =
+    resolveProviderLandingViewState(requestedView, {
+      ...keyContextLoad,
+      keys: apiKeys,
+    });
 
   const handleSelectedViewChange = (nextView) => {
     const href =
@@ -196,22 +205,23 @@ function ProvidersContent() {
 
   useEffect(() => {
     const fetchData = async () => {
+      const keyContextPromise = loadProviderLandingKeyContext();
       try {
-        const [connectionsRes, nodesRes, keysRes] = await Promise.all([
+        const [connectionsRes, nodesRes] = await Promise.all([
           fetch("/api/providers"),
           fetch("/api/provider-nodes"),
-          fetch("/api/keys"),
         ]);
         const connectionsData = await connectionsRes.json();
         const nodesData = await nodesRes.json();
-        const keysData = await keysRes.json();
         if (connectionsRes.ok)
           setConnections(connectionsData.connections || []);
         if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
-        if (keysRes.ok) setApiKeys(keysData.keys || []);
       } catch (error) {
         console.log("Error fetching data:", error);
       } finally {
+        const keyContext = await keyContextPromise;
+        setKeyContextLoad({ ok: keyContext.ok, error: keyContext.error });
+        setApiKeys(keyContext.keys);
         setLoading(false);
       }
     };
@@ -471,6 +481,42 @@ function ProvidersContent() {
       <div className="flex flex-col gap-8">
         <CardSkeleton />
         <CardSkeleton />
+      </div>
+    );
+  }
+
+  if (keyContextUnavailable) {
+    return (
+      <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
+        <ProviderRoutingContextBar
+          apiKeys={apiKeys}
+          selectedView={selectedView}
+          onChange={handleSelectedViewChange}
+          activeCount={0}
+          totalCount={fullRoutingCatalogIds.length}
+        />
+        <Card>
+          <div className="flex flex-col gap-3">
+            <div className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
+              <span className="material-symbols-outlined shrink-0 text-lg">
+                {keyContextLoad.error ? "warning" : "progress_activity"}
+              </span>
+              <p>
+                {keyContextLoad.error
+                  ? `API key provider controls are unavailable: ${keyContextLoad.error}`
+                  : "Loading API key provider controls..."}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => handleSelectedViewChange(GLOBAL_PROVIDER_VIEW)}
+              className="self-start"
+            >
+              Return to Global view
+            </Button>
+          </div>
+        </Card>
       </div>
     );
   }

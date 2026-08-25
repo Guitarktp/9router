@@ -84,6 +84,32 @@ export function nextActiveConnections(
   return next;
 }
 
+export function nextKeyConnectionSelection(
+  apiKey,
+  providerId,
+  connectionId,
+  nextActive,
+  connections,
+) {
+  return nextActiveConnections(
+    apiKey,
+    providerId,
+    connectionId,
+    nextActive,
+    connections,
+  );
+}
+
+export function shouldShowConnectionRecovery({
+  providerActiveForKey,
+  connectionMode,
+  effectiveConnectionIds,
+}) {
+  return providerActiveForKey
+    && connectionMode === "custom"
+    && effectiveConnectionIds.length === 0;
+}
+
 export async function saveActiveConnections(
   keyId,
   activeConnections,

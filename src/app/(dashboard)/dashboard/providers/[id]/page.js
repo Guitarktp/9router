@@ -30,8 +30,9 @@ import {
   effectiveConnectionIds,
   getProviderConnectionMode,
   materializeConnectionSelection,
-  nextActiveConnections,
+  nextKeyConnectionSelection,
   setProviderConnectionMode,
+  shouldShowConnectionRecovery,
 } from "../apiKeyConnectionRoutingState";
 import {
   GLOBAL_PROVIDER_VIEW,
@@ -580,20 +581,13 @@ export default function ProviderDetailPage() {
     if (!selectedApiKey || !providerActiveForKey) return;
 
     try {
-      const connection = connections.find(({ id }) => id === connectionId);
-      const selectedConnectionIds = !selected && connection?.isActive === false
-        ? materializeConnectionSelection(
-            selectedApiKey,
-            providerId,
-            connections,
-          ).filter((id) => id !== connectionId)
-        : nextActiveConnections(
-            selectedApiKey,
-            providerId,
-            connectionId,
-            selected,
-            connections,
-          );
+      const selectedConnectionIds = nextKeyConnectionSelection(
+        selectedApiKey,
+        providerId,
+        connectionId,
+        selected,
+        connections,
+      );
       const activeConnections = {
         ...(selectedApiKey.activeConnections || {}),
         [providerId]: selectedConnectionIds,
@@ -1716,7 +1710,11 @@ export default function ProviderDetailPage() {
               <p>This provider is inactive for this API key. Its connection policy is visible but cannot take effect.</p>
             </div>
           )}
-          {selectedApiKey && connectionMode === "custom" && effectiveKeyConnectionIds.length === 0 && (
+          {selectedApiKey && shouldShowConnectionRecovery({
+            providerActiveForKey,
+            connectionMode,
+            effectiveConnectionIds: effectiveKeyConnectionIds,
+          }) && (
             <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
               <span className="material-symbols-outlined shrink-0 text-lg">warning</span>
               <p>No selected connections are globally active. Select an active connection or switch to Use Global.</p>

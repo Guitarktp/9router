@@ -51,6 +51,78 @@ describe("API-key provider persistence", () => {
     expect((await db.getApiKeyById(key.id)).activeConnections).toEqual(policy);
   });
 
+  it("canonicalizes restored provider aliases before request routing", async () => {
+    const db = await import("@/lib/db/index.js");
+    await db.importDb({
+      providerConnections: [
+        { id: "claude-1", provider: "claude", isActive: true },
+        { id: "claude-2", provider: "claude", isActive: true },
+      ],
+      apiKeys: [{
+        id: "alias-key",
+        key: "sk-alias-key",
+        machineId: "machine-1",
+        activeConnections: { cc: ["claude-1"] },
+      }],
+    });
+
+    const restored = await db.getApiKeyByValue("sk-alias-key");
+    expect(restored.activeConnections).toEqual({ claude: ["claude-1"] });
+
+    const { getAllowedConnectionIds, resolveApiKeyRoutingContext } = await import(
+      "@/sse/services/apiKeyRouting.js"
+    );
+    const context = await resolveApiKeyRoutingContext({
+      apiKey: "sk-alias-key",
+      requireApiKey: true,
+      lookup: db.getApiKeyByValue,
+    });
+    expect([...getAllowedConnectionIds(context, "claude")]).toEqual(["claude-1"]);
+  });
+
+  it("rejects colliding restored aliases without replacing the current database", async () => {
+    const db = await import("@/lib/db/index.js");
+    const existing = await db.createApiKey("existing", "machine-1");
+
+    await expect(db.importDb({
+      providerConnections: [
+        { id: "claude-1", provider: "claude", isActive: true },
+        { id: "claude-2", provider: "claude", isActive: true },
+      ],
+      apiKeys: [{
+        id: "collision-key",
+        key: "sk-collision-key",
+        machineId: "machine-1",
+        activeConnections: {
+          cc: ["claude-1"],
+          claude: ["claude-2"],
+        },
+      }],
+    })).rejects.toThrow(/duplicate provider/i);
+
+    expect(await db.getApiKeyById(existing.id)).toMatchObject({ id: existing.id });
+    expect(await db.getApiKeyById("collision-key")).toBeNull();
+  });
+
+  it("rejects a restored policy whose existing connection belongs to another provider", async () => {
+    const db = await import("@/lib/db/index.js");
+    const existing = await db.createApiKey("existing", "machine-1");
+
+    await expect(db.importDb({
+      providerConnections: [
+        { id: "codex-1", provider: "codex", isActive: true },
+      ],
+      apiKeys: [{
+        id: "mismatch-key",
+        key: "sk-mismatch-key",
+        machineId: "machine-1",
+        activeConnections: { claude: ["codex-1"] },
+      }],
+    })).rejects.toThrow(/belongs to provider/i);
+
+    expect(await db.getApiKeyById(existing.id)).toMatchObject({ id: existing.id });
+  });
+
   it("rejects an empty connection list instead of inheriting all connections", async () => {
     const db = await import("@/lib/db/index.js");
     const key = await db.createApiKey("empty-connections", "machine-1");

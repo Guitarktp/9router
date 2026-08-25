@@ -21,6 +21,53 @@ describe("API-key provider dashboard state", () => {
       ),
     ],
     ["invalid JSON", async () => new Response("not-json")],
+    ["invalid payload", async () => Response.json({ keys: {} })],
+  ])("keeps the landing page in a requested key view when key context has %s", async (_case, fetchImpl) => {
+    const {
+      loadProviderLandingKeyContext,
+      resolveProviderLandingViewState,
+    } = await import(
+      "@/app/(dashboard)/dashboard/providers/providerLandingKeyContext.js"
+    );
+
+    const keyContext = await loadProviderLandingKeyContext(fetchImpl);
+
+    expect(keyContext.ok).toBe(false);
+    expect(keyContext.keys).toEqual([]);
+    expect(keyContext.error).toEqual(expect.any(String));
+    expect(resolveProviderLandingViewState("key-1", keyContext)).toEqual({
+      selectedView: "key-1",
+      keyContextUnavailable: true,
+    });
+  });
+
+  it("falls back to Global on the landing page only after a successful catalog omits the key", async () => {
+    const {
+      loadProviderLandingKeyContext,
+      resolveProviderLandingViewState,
+    } = await import(
+      "@/app/(dashboard)/dashboard/providers/providerLandingKeyContext.js"
+    );
+    const keyContext = await loadProviderLandingKeyContext(async () =>
+      Response.json({ keys: [{ id: "key-1" }] }),
+    );
+
+    expect(resolveProviderLandingViewState("missing-key", keyContext)).toEqual({
+      selectedView: "global",
+      keyContextUnavailable: false,
+    });
+  });
+
+  it.each([
+    ["network rejection", async () => { throw new Error("offline"); }],
+    [
+      "non-OK response",
+      async () => Response.json(
+        { error: { message: "Keys unavailable" } },
+        { status: 503 },
+      ),
+    ],
+    ["invalid JSON", async () => new Response("not-json")],
   ])("returns key-context failure for %s without throwing", async (_case, fetchImpl) => {
     const { loadProviderDetailKeyContext } = await import(
       "@/app/(dashboard)/dashboard/providers/[id]/providerDetailKeyContext.js"
@@ -174,6 +221,39 @@ describe("API-key provider dashboard state", () => {
         connections,
       ),
     ).toEqual(["c1"]);
+  });
+
+  it("blocks the page transition that removes the final saved disabled connection", async () => {
+    const { nextKeyConnectionSelection } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyConnectionRoutingState.js"
+    );
+
+    expect(() =>
+      nextKeyConnectionSelection(
+        { activeConnections: { claude: ["c1"] } },
+        "claude",
+        "c1",
+        false,
+        [{ id: "c1", isActive: false }],
+      ),
+    ).toThrowError(/at least one connection/i);
+  });
+
+  it("does not offer connection recovery actions while the provider is inactive", async () => {
+    const { shouldShowConnectionRecovery } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyConnectionRoutingState.js"
+    );
+
+    expect(shouldShowConnectionRecovery({
+      providerActiveForKey: false,
+      connectionMode: "custom",
+      effectiveConnectionIds: [],
+    })).toBe(false);
+    expect(shouldShowConnectionRecovery({
+      providerActiveForKey: true,
+      connectionMode: "custom",
+      effectiveConnectionIds: [],
+    })).toBe(true);
   });
 
   it("rejects switching to custom mode when every connection is globally disabled", async () => {

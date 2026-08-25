@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { resolveProviderAlias } from "open-sse/services/model.js";
 
 export function parseActiveProviders(value) {
   if (value == null) return null;
@@ -12,26 +13,69 @@ export function parseActiveProviders(value) {
   return [...new Set(parsed)];
 }
 
-export function parseActiveConnections(value) {
+function invalidActiveConnections(message, strict) {
+  if (strict) throw new TypeError(message);
+  console.warn("[DB][apiKeys] malformed activeConnections; using inherited mode");
+  return null;
+}
+
+function normalizeActiveConnections(value, strict) {
   if (value == null) return null;
   const parsed = parseJson(value, null);
   if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-    console.warn("[DB][apiKeys] malformed activeConnections; using inherited mode");
-    return null;
+    return invalidActiveConnections("activeConnections must be a provider mapping", strict);
   }
   const normalized = {};
   for (const [providerId, ids] of Object.entries(parsed)) {
     if (!providerId.trim() || !Array.isArray(ids) || ids.length === 0) {
-      console.warn("[DB][apiKeys] malformed activeConnections; using inherited mode");
-      return null;
+      return invalidActiveConnections("activeConnections must contain non-empty connection arrays", strict);
     }
     if (ids.some((id) => typeof id !== "string" || !id.trim())) {
-      console.warn("[DB][apiKeys] malformed activeConnections; using inherited mode");
-      return null;
+      return invalidActiveConnections("activeConnections contains an invalid connection ID", strict);
     }
-    normalized[providerId] = [...new Set(ids)];
+    const canonicalProviderId = resolveProviderAlias(providerId.trim());
+    if (Object.hasOwn(normalized, canonicalProviderId)) {
+      return invalidActiveConnections(
+        `Duplicate provider after canonicalization: ${canonicalProviderId}`,
+        strict,
+      );
+    }
+    const uniqueIds = [...new Set(ids)];
+    if (strict && uniqueIds.length !== ids.length) {
+      return invalidActiveConnections("activeConnections contains duplicate connection IDs", true);
+    }
+    normalized[canonicalProviderId] = uniqueIds;
   }
   return Object.keys(normalized).length === 0 ? null : normalized;
+}
+
+export function parseActiveConnections(value) {
+  return normalizeActiveConnections(value, false);
+}
+
+export function parseActiveConnectionsForImport(value, providerConnections = []) {
+  const normalized = normalizeActiveConnections(value, true);
+  if (normalized === null) return null;
+
+  const connectionProviders = new Map(
+    providerConnections.map((connection) => [
+      connection.id,
+      resolveProviderAlias(connection.provider),
+    ]),
+  );
+  for (const [providerId, connectionIds] of Object.entries(normalized)) {
+    for (const connectionId of connectionIds) {
+      const owner = connectionProviders.get(connectionId);
+      // Missing IDs are intentionally retained as stale explicit selections,
+      // which routing treats as an empty allowlist rather than inheritance.
+      if (owner && owner !== providerId) {
+        throw new TypeError(
+          `Connection ${connectionId} belongs to provider ${owner}, not ${providerId}`,
+        );
+      }
+    }
+  }
+  return normalized;
 }
 
 function rowToKey(row) {

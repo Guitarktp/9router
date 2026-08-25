@@ -85,4 +85,5 @@ graphify-out/*
 .script/
 .codegraph/
 .PR/
+.worktrees/
 .next-analyze/*

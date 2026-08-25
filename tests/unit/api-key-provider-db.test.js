@@ -51,6 +51,14 @@ describe("API-key provider persistence", () => {
     expect((await db.getApiKeyById(key.id)).activeConnections).toEqual(policy);
   });
 
+  it("rejects an empty connection list instead of inheriting all connections", async () => {
+    const db = await import("@/lib/db/index.js");
+    const key = await db.createApiKey("empty-connections", "machine-1");
+    await expect(db.updateApiKey(key.id, { activeConnections: { claude: [] } }))
+      .rejects.toThrow(TypeError);
+    expect((await db.getApiKeyById(key.id)).activeConnections).toBeNull();
+  });
+
   it("treats malformed stored connection policy as inherited", async () => {
     const db = await import("@/lib/db/index.js");
     const key = await db.createApiKey("malformed", "machine-1");

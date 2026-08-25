@@ -96,12 +96,25 @@ export async function updateApiKey(id, data) {
       throw new TypeError("activeProviders must be null or a non-empty array");
     }
   }
+  let activeConnections;
+  if (Object.hasOwn(data, "activeConnections")) {
+    activeConnections = data.activeConnections === null
+      ? null
+      : parseActiveConnections(data.activeConnections);
+    if (activeConnections === null) {
+      throw new TypeError("activeConnections must be null or a non-empty provider mapping");
+    }
+  }
   const db = await getAdapter();
   let result = null;
   db.transaction(() => {
     const row = db.get(`SELECT * FROM apiKeys WHERE id = ?`, [id]);
     if (!row) return;
-    const merged = { ...rowToKey(row), ...data };
+    const merged = {
+      ...rowToKey(row),
+      ...data,
+      ...(Object.hasOwn(data, "activeConnections") ? { activeConnections } : {}),
+    };
     db.run(
       `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, activeProviders = ?, activeConnections = ? WHERE id = ?`,
       [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.activeProviders === null ? null : stringifyJson(merged.activeProviders), merged.activeConnections === null ? null : stringifyJson(merged.activeConnections), id]

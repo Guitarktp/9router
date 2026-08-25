@@ -9,7 +9,7 @@ import { getAppVersion } from "./version.js";
 import { stringifyJson } from "./helpers/jsonCol.js";
 import {
   parseActiveProviders,
-  parseActiveConnectionsForImport,
+  parseActiveConnectionsForLegacyImport,
 } from "./repos/apiKeysRepo.js";
 
 // Marker file: prevents re-importing legacy JSON when user wipes data.sqlite.
@@ -148,7 +148,7 @@ function importLegacyMain(adapter, data) {
     const activeProviders = Array.isArray(k.activeProviders)
       ? parseActiveProviders(k.activeProviders)
       : null;
-    const activeConnections = parseActiveConnectionsForImport(
+    const activeConnections = parseActiveConnectionsForLegacyImport(
       k.activeConnections,
       data.providerConnections || [],
     );

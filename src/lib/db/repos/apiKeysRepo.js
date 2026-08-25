@@ -19,30 +19,36 @@ function invalidActiveConnections(message, strict) {
   return null;
 }
 
-function normalizeActiveConnections(value, strict) {
+function normalizeActiveConnections(value, {
+  rejectMalformed = false,
+  rejectCanonicalCollisions = false,
+} = {}) {
   if (value == null) return null;
   const parsed = parseJson(value, null);
   if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-    return invalidActiveConnections("activeConnections must be a provider mapping", strict);
+    return invalidActiveConnections("activeConnections must be a provider mapping", rejectMalformed);
   }
   const normalized = {};
   for (const [providerId, ids] of Object.entries(parsed)) {
     if (!providerId.trim() || !Array.isArray(ids) || ids.length === 0) {
-      return invalidActiveConnections("activeConnections must contain non-empty connection arrays", strict);
+      return invalidActiveConnections("activeConnections must contain non-empty connection arrays", rejectMalformed);
     }
     if (ids.some((id) => typeof id !== "string" || !id.trim())) {
-      return invalidActiveConnections("activeConnections contains an invalid connection ID", strict);
+      return invalidActiveConnections("activeConnections contains an invalid connection ID", rejectMalformed);
     }
     const canonicalProviderId = resolveProviderAlias(providerId.trim());
     if (Object.hasOwn(normalized, canonicalProviderId)) {
       return invalidActiveConnections(
         `Duplicate provider after canonicalization: ${canonicalProviderId}`,
-        strict,
+        rejectCanonicalCollisions,
       );
     }
     const uniqueIds = [...new Set(ids)];
-    if (strict && uniqueIds.length !== ids.length) {
-      return invalidActiveConnections("activeConnections contains duplicate connection IDs", true);
+    if (uniqueIds.length !== ids.length) {
+      return invalidActiveConnections(
+        "activeConnections contains duplicate connection IDs",
+        rejectMalformed,
+      );
     }
     normalized[canonicalProviderId] = uniqueIds;
   }
@@ -50,11 +56,31 @@ function normalizeActiveConnections(value, strict) {
 }
 
 export function parseActiveConnections(value) {
-  return normalizeActiveConnections(value, false);
+  return normalizeActiveConnections(value);
 }
 
 export function parseActiveConnectionsForImport(value, providerConnections = []) {
-  const normalized = normalizeActiveConnections(value, true);
+  const normalized = normalizeActiveConnections(value, {
+    rejectMalformed: true,
+    rejectCanonicalCollisions: true,
+  });
+  return validateImportedConnectionOwnership(normalized, providerConnections);
+}
+
+export function parseActiveConnectionsForLegacyImport(
+  value,
+  providerConnections = [],
+) {
+  const normalized = normalizeActiveConnections(value, {
+    rejectMalformed: false,
+    // Alias collisions are semantic conflicts, not historical shape drift.
+    // Rejecting them avoids silently broadening an ambiguous key policy.
+    rejectCanonicalCollisions: true,
+  });
+  return validateImportedConnectionOwnership(normalized, providerConnections);
+}
+
+function validateImportedConnectionOwnership(normalized, providerConnections) {
   if (normalized === null) return null;
 
   const connectionProviders = new Map(

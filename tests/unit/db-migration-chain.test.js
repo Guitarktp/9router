@@ -88,6 +88,52 @@ describe("Schema migrations", () => {
     expect(aliases).toHaveLength(1);
   });
 
+  it("legacy import keeps unrelated data while malformed connection policies become inherited", async () => {
+    const createdAt = new Date().toISOString();
+    const legacy = {
+      settings: { preserved: true },
+      providerConnections: [
+        { id: "claude-1", provider: "claude", isActive: true },
+      ],
+      apiKeys: [
+        { id: "valid", key: "sk-valid", activeConnections: { cc: ["claude-1"] }, createdAt },
+        { id: "array", key: "sk-array", activeConnections: [], createdAt },
+        { id: "empty", key: "sk-empty", activeConnections: { claude: [] }, createdAt },
+        { id: "duplicate", key: "sk-duplicate", activeConnections: { claude: ["claude-1", "claude-1"] }, createdAt },
+        { id: "blank", key: "sk-blank", activeConnections: { claude: [""] }, createdAt },
+        { id: "wrong-type", key: "sk-wrong-type", activeConnections: { claude: "claude-1" }, createdAt },
+        { id: "malformed-json", key: "sk-malformed", activeConnections: "{bad", createdAt },
+      ],
+      modelAliases: { preserved: "claude/opus" },
+    };
+    fs.writeFileSync(path.join(tempDir, "db.json"), JSON.stringify(legacy));
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+
+    expect(JSON.parse(db.get("SELECT data FROM settings WHERE id = 1").data))
+      .toEqual({ preserved: true });
+    expect(db.all("SELECT id FROM apiKeys")).toHaveLength(7);
+    expect(db.get(
+      "SELECT activeConnections FROM apiKeys WHERE id = ?",
+      ["valid"],
+    ).activeConnections).toBe(JSON.stringify({ claude: ["claude-1"] }));
+    expect(db.all(
+      "SELECT activeConnections FROM apiKeys WHERE id != ? ORDER BY id",
+      ["valid"],
+    ).map((row) => row.activeConnections)).toEqual([
+      null, null, null, null, null, null,
+    ]);
+    expect(db.get(
+      "SELECT value FROM kv WHERE scope = 'modelAliases' AND key = 'preserved'",
+    )).not.toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      "[DB][apiKeys] malformed activeConnections; using inherited mode",
+    );
+    warn.mockRestore();
+  });
+
   it("auto-sync re-creates missing index when DB lacks it", async () => {
     const { getAdapter } = await import("@/lib/db/driver.js");
     const db = await getAdapter();
@@ -132,7 +178,7 @@ describe("Schema migrations", () => {
 
     const backupRoot = path.join(tempDir, "db", "backups");
     const schemaBackups = fs.readdirSync(backupRoot)
-      .filter((name) => name.startsWith("schema-1-to-2-"));
+      .filter((name) => name.startsWith("schema-1-to-3-"));
     expect(schemaBackups).toHaveLength(1);
     expect(fs.existsSync(path.join(backupRoot, schemaBackups[0], "data.sqlite"))).toBe(true);
   });

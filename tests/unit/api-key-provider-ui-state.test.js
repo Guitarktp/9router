@@ -11,6 +11,71 @@ function deferred() {
 }
 
 describe("API-key provider dashboard state", () => {
+  it.each([
+    ["network rejection", async () => { throw new Error("offline"); }],
+    [
+      "non-OK response",
+      async () => Response.json(
+        { error: { message: "Keys unavailable" } },
+        { status: 503 },
+      ),
+    ],
+    ["invalid JSON", async () => new Response("not-json")],
+  ])("returns key-context failure for %s without throwing", async (_case, fetchImpl) => {
+    const { loadProviderDetailKeyContext } = await import(
+      "@/app/(dashboard)/dashboard/providers/[id]/providerDetailKeyContext.js"
+    );
+
+    const result = await loadProviderDetailKeyContext(fetchImpl);
+
+    expect(result.ok).toBe(false);
+    expect(result.keys).toEqual([]);
+    expect(result.error).toEqual(expect.any(String));
+  });
+
+  it("returns API keys from a successful key-context response", async () => {
+    const { loadProviderDetailKeyContext } = await import(
+      "@/app/(dashboard)/dashboard/providers/[id]/providerDetailKeyContext.js"
+    );
+    const fetchImpl = async () => Response.json({
+      keys: [{ id: "key-1", activeProviders: null, activeConnections: null }],
+    });
+
+    await expect(loadProviderDetailKeyContext(fetchImpl)).resolves.toEqual({
+      ok: true,
+      keys: [{ id: "key-1", activeProviders: null, activeConnections: null }],
+      error: null,
+    });
+  });
+
+  it("preserves a requested key view while key context is unavailable", async () => {
+    const { resolveProviderDetailView } = await import(
+      "@/app/(dashboard)/dashboard/providers/[id]/providerDetailKeyContext.js"
+    );
+
+    expect(
+      resolveProviderDetailView("key-1", {
+        ok: false,
+        keys: [],
+        error: "Keys unavailable",
+      }),
+    ).toBe("key-1");
+  });
+
+  it("falls back to Global only after a successful key catalog omits the requested key", async () => {
+    const { resolveProviderDetailView } = await import(
+      "@/app/(dashboard)/dashboard/providers/[id]/providerDetailKeyContext.js"
+    );
+
+    expect(
+      resolveProviderDetailView("missing-key", {
+        ok: true,
+        keys: [{ id: "key-1" }],
+        error: null,
+      }),
+    ).toBe("global");
+  });
+
   it("materializes only globally active rows for inherited connection mode", async () => {
     const { materializeConnectionSelection } = await import(
       "@/app/(dashboard)/dashboard/providers/apiKeyConnectionRoutingState.js"

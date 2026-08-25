@@ -5,6 +5,11 @@ import {
   intersectApiKeysWithCurrentCatalog,
   normalizeActiveProviderInput,
 } from "@/lib/apiKeyProviderCatalog";
+import {
+  ActiveConnectionValidationError,
+  intersectApiKeysWithCurrentConnections,
+  normalizeActiveConnectionInput,
+} from "@/lib/apiKeyConnectionPolicy";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -14,7 +19,8 @@ export async function GET(request, { params }) {
     if (!storedKey) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
-    const [key] = await intersectApiKeysWithCurrentCatalog([storedKey]);
+    const catalogKeys = await intersectApiKeysWithCurrentCatalog([storedKey]);
+    const [key] = await intersectApiKeysWithCurrentConnections(catalogKeys);
     return NextResponse.json({ key });
   } catch (error) {
     console.log("Error fetching key:", error);
@@ -39,12 +45,24 @@ export async function PUT(request, { params }) {
     if (Object.hasOwn(body, "activeProviders")) {
       updateData.activeProviders = await normalizeActiveProviderInput(body.activeProviders);
     }
+    if (Object.hasOwn(body, "activeConnections")) {
+      updateData.activeConnections = await normalizeActiveConnectionInput(
+        body.activeConnections,
+        existing.activeConnections,
+      );
+    }
 
     const updated = await updateApiKey(id, updateData);
 
     return NextResponse.json({ key: updated });
   } catch (error) {
     if (error instanceof ActiveProviderValidationError) {
+      return NextResponse.json(
+        { error: { code: error.code, message: error.message } },
+        { status: error.status },
+      );
+    }
+    if (error instanceof ActiveConnectionValidationError) {
       return NextResponse.json(
         { error: { code: error.code, message: error.message } },
         { status: error.status },

@@ -38,6 +38,26 @@ describe("API-key routing policy", () => {
     expect([...restricted.activeProviders]).toEqual(["claude"]);
   });
 
+  it("returns a provider-specific connection allowlist", async () => {
+    const { resolveApiKeyRoutingContext, getAllowedConnectionIds } = await import(
+      "@/sse/services/apiKeyRouting.js"
+    );
+    const context = await resolveApiKeyRoutingContext({
+      apiKey: "key-a",
+      requireApiKey: true,
+      lookup: vi.fn().mockResolvedValue({
+        id: "key-a",
+        isActive: true,
+        activeProviders: null,
+        activeConnections: { claude: ["claude-1", "claude-3"], codex: [] },
+      }),
+    });
+
+    expect([...getAllowedConnectionIds(context, "cc")]).toEqual(["claude-1", "claude-3"]);
+    expect([...getAllowedConnectionIds(context, "codex")]).toEqual([]);
+    expect(getAllowedConnectionIds(context, "gemini")).toBeNull();
+  });
+
   it("filters candidates in order without removing duplicates", async () => {
     const { filterModelCandidates } = await import("@/sse/services/apiKeyRouting.js");
     const context = { ok: true, mode: "restricted", activeProviders: new Set(["claude"]) };

@@ -1,5 +1,6 @@
 import { getApiKeyByValue } from "@/lib/localDb";
 import { getModelInfo } from "@/sse/services/model.js";
+import { resolveProviderId } from "@/shared/constants/providers.js";
 
 export const ROUTING_MODE = Object.freeze({
   UNRESTRICTED: "unrestricted",
@@ -24,16 +25,27 @@ export async function resolveApiKeyRoutingContext({
       : { ok: true, mode: ROUTING_MODE.UNRESTRICTED, key: null };
   }
 
+  const baseContext = {
+    ok: true,
+    key,
+    activeConnections: key.activeConnections || null,
+  };
+
   if (key.activeProviders === null) {
-    return { ok: true, mode: ROUTING_MODE.UNRESTRICTED, key };
+    return { ...baseContext, mode: ROUTING_MODE.UNRESTRICTED };
   }
 
   return {
-    ok: true,
+    ...baseContext,
     mode: ROUTING_MODE.RESTRICTED,
-    key,
     activeProviders: new Set(key.activeProviders),
   };
+}
+
+export function getAllowedConnectionIds(context, providerId) {
+  const canonicalId = resolveProviderId(providerId);
+  const configured = context?.activeConnections?.[canonicalId];
+  return Array.isArray(configured) ? new Set(configured) : null;
 }
 
 export function isProviderActive(context, providerId) {

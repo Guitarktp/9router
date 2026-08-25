@@ -69,7 +69,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       };
     }
 
-    const connections = await getProviderConnections({ provider: providerId, isActive: true });
+    const allowedConnectionIds = options?.allowedConnectionIds instanceof Set
+      ? options.allowedConnectionIds
+      : null;
+    const globalConnections = await getProviderConnections({ provider: providerId, isActive: true });
+    const connections = allowedConnectionIds === null
+      ? globalConnections
+      : globalConnections.filter((connection) => allowedConnectionIds.has(connection.id));
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     if (connections.length === 0) {

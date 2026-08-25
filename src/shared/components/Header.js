@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import PropTypes from "prop-types";
 import ProviderIcon from "@/shared/components/ProviderIcon";
@@ -14,6 +14,10 @@ import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS } from "@/shared/constants/providers";
 import { getProviderIconSrc } from "@/shared/utils/providerIcon";
 import { translate } from "@/i18n/runtime";
+import {
+  GLOBAL_PROVIDER_VIEW,
+  buildProvidersHref,
+} from "@/app/(dashboard)/dashboard/providers/providerViewContext";
 
 const getPageInfo = (pathname) => {
   if (!pathname) return { title: "", description: "", breadcrumbs: [] };
@@ -60,7 +64,7 @@ const getPageInfo = (pathname) => {
         title: providerInfo.name,
         description: "",
         breadcrumbs: [
-          { label: "Providers", href: "/dashboard/providers" },
+          { label: "Providers", preserveProviderView: true },
           {
             label: providerInfo.name,
             image: getProviderIconSrc(providerInfo.id),
@@ -179,6 +183,20 @@ const getPageInfo = (pathname) => {
   return { title: "", description: "", breadcrumbs: [] };
 };
 
+function ProviderBreadcrumbLink({ label }) {
+  const searchParams = useSearchParams();
+  const selectedView = searchParams?.get("view") || GLOBAL_PROVIDER_VIEW;
+
+  return (
+    <Link
+      href={buildProvidersHref(selectedView)}
+      className="text-text-muted hover:text-primary transition-colors"
+    >
+      {label}
+    </Link>
+  );
+}
+
 export default function Header({ onMenuClick, showMenuButton = true }) {
   const pathname = usePathname();
   const [displayName, setDisplayName] = useState("");
@@ -254,7 +272,20 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
                     chevron_right
                   </span>
                 )}
-                {crumb.href ? (
+                {crumb.preserveProviderView ? (
+                  <Suspense
+                    fallback={(
+                      <Link
+                        href={buildProvidersHref(GLOBAL_PROVIDER_VIEW)}
+                        className="text-text-muted hover:text-primary transition-colors"
+                      >
+                        {crumb.label}
+                      </Link>
+                    )}
+                  >
+                    <ProviderBreadcrumbLink label={crumb.label} />
+                  </Suspense>
+                ) : crumb.href ? (
                   <Link
                     href={crumb.href}
                     className="text-text-muted hover:text-primary transition-colors"
@@ -370,4 +401,8 @@ function HeaderSearch() {
 Header.propTypes = {
   onMenuClick: PropTypes.func,
   showMenuButton: PropTypes.bool,
+};
+
+ProviderBreadcrumbLink.propTypes = {
+  label: PropTypes.string.isRequired,
 };

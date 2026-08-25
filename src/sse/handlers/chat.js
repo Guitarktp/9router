@@ -11,6 +11,7 @@ import { getModelInfo, getComboModels } from "../services/model.js";
 import {
   resolveApiKeyRoutingContext,
   isProviderActive,
+  getAllowedConnectionIds,
   filterModelCandidates,
 } from "../services/apiKeyRouting.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
@@ -270,11 +271,17 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest, request, 
 
   // Try with available accounts (fallback on errors)
   const excludeConnectionIds = new Set();
+  const allowedConnectionIds = getAllowedConnectionIds(routingContext, provider);
   let lastError = null;
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = await getProviderCredentials(
+      provider,
+      excludeConnectionIds,
+      model,
+      { allowedConnectionIds },
+    );
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {

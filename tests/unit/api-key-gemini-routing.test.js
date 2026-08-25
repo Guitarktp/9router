@@ -149,4 +149,24 @@ describe("API-key routing through the Gemini-compatible route", () => {
     expect(mocks.getApiKeyByValue).toHaveBeenCalledWith("sk-google");
     expect(mocks.getProviderCredentials).not.toHaveBeenCalled();
   });
+
+  it("keeps an active key's Codex connection subset after Gemini conversion", async () => {
+    mocks.getApiKeyByValue.mockResolvedValue({
+      id: "key-google",
+      name: "Google client",
+      isActive: true,
+      activeProviders: ["codex"],
+      activeConnections: { codex: ["codex-2"] },
+    });
+
+    const response = await POST(geminiRequest({ headerKey: "sk-google" }), { params });
+
+    expect(response.status).toBe(200);
+    expect(mocks.getProviderCredentials).toHaveBeenCalledWith(
+      "codex",
+      expect.any(Set),
+      "gpt-5",
+      expect.objectContaining({ allowedConnectionIds: new Set(["codex-2"]) }),
+    );
+  });
 });

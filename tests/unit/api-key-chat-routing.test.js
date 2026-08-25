@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   resolveContext: vi.fn(),
   isProviderActive: vi.fn(),
+  getAllowedConnectionIds: vi.fn(),
   filterModelCandidates: vi.fn(),
   getSettings: vi.fn(),
   getModelInfo: vi.fn(),
   getComboModels: vi.fn(),
   getProviderCredentials: vi.fn(),
+  markAccountUnavailable: vi.fn(),
   handleChatCore: vi.fn(),
   handleComboChat: vi.fn(),
   handleFusionChat: vi.fn(),
@@ -20,7 +22,7 @@ vi.mock("open-sse/index.js", () => ({}));
 
 vi.mock("@/sse/services/auth.js", () => ({
   getProviderCredentials: mocks.getProviderCredentials,
-  markAccountUnavailable: vi.fn(),
+  markAccountUnavailable: mocks.markAccountUnavailable,
   clearAccountError: vi.fn(),
   extractApiKey: vi.fn(() => "sk-pegasus"),
   isValidApiKey: vi.fn(),
@@ -38,6 +40,7 @@ vi.mock("@/sse/services/model.js", () => ({
 vi.mock("@/sse/services/apiKeyRouting.js", () => ({
   resolveApiKeyRoutingContext: mocks.resolveContext,
   isProviderActive: mocks.isProviderActive,
+  getAllowedConnectionIds: mocks.getAllowedConnectionIds,
   filterModelCandidates: mocks.filterModelCandidates,
 }));
 
@@ -128,6 +131,10 @@ describe("API key chat provider routing", () => {
     mocks.isProviderActive.mockImplementation(
       (context, provider) => context.mode === "unrestricted" || context.activeProviders.has(provider),
     );
+    mocks.getAllowedConnectionIds.mockImplementation((context, provider) => {
+      const configured = context.activeConnections?.[provider];
+      return Array.isArray(configured) ? new Set(configured) : null;
+    });
     mocks.filterModelCandidates.mockImplementation(async (models, context) => {
       if (context.mode === "unrestricted") return models;
       const allowed = [];
@@ -144,6 +151,7 @@ describe("API key chat provider routing", () => {
       connectionName: "Primary",
       accessToken: "token",
     });
+    mocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: false });
     mocks.checkAndRefreshToken.mockImplementation(async (_provider, credentials) => credentials);
     mocks.handleChatCore.mockResolvedValue({
       success: true,
@@ -193,6 +201,85 @@ describe("API key chat provider routing", () => {
     expect(mocks.resolveContext).toHaveBeenCalledTimes(1);
     expect(mocks.handleChatCore).toHaveBeenCalledTimes(1);
     expect(mocks.handleChatCore).toHaveBeenCalledWith(expect.objectContaining({ apiKey: "sk-pegasus" }));
+  });
+
+  it("uses the selected subset on every retry", async () => {
+    mocks.resolveContext.mockResolvedValue({
+      ...restricted(["claude"]),
+      activeConnections: { claude: ["claude-2", "claude-4"] },
+    });
+    mocks.getModelInfo.mockResolvedValue({ provider: "claude", model: "opus" });
+    mocks.getProviderCredentials
+      .mockResolvedValueOnce({ connectionId: "claude-2", connectionName: "Two", accessToken: "t2" })
+      .mockResolvedValueOnce({ connectionId: "claude-4", connectionName: "Four", accessToken: "t4" });
+    mocks.handleChatCore
+      .mockResolvedValueOnce({ success: false, status: 429, error: "limited" })
+      .mockResolvedValueOnce({ success: true, response: Response.json({ ok: true }) });
+    mocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true });
+
+    const response = await handleChat(chatRequest({ model: "cc/opus" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(2);
+    const allowlists = mocks.getProviderCredentials.mock.calls.map((call) => call[3].allowedConnectionIds);
+    expect(allowlists.map((allowed) => [...allowed])).toEqual([
+      ["claude-2", "claude-4"],
+      ["claude-2", "claude-4"],
+    ]);
+    expect(allowlists[1]).toBe(allowlists[0]);
+  });
+
+  it("keeps each combo provider within its selected connection subset", async () => {
+    mocks.resolveContext.mockResolvedValue({
+      ...restricted(["claude", "codex"]),
+      activeConnections: { claude: ["claude-2"], codex: ["codex-7"] },
+    });
+    mocks.getComboModels.mockImplementation(async (model) => (
+      model === "combo" ? ["cc/opus", "cx/gpt-5"] : null
+    ));
+    mocks.handleComboChat.mockImplementation(async ({ body, models, handleSingleModel }) => {
+      let response;
+      for (const model of models) response = await handleSingleModel(body, model);
+      return response;
+    });
+
+    const response = await handleChat(chatRequest({ model: "combo" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.getProviderCredentials).toHaveBeenCalledWith(
+      "claude",
+      expect.any(Set),
+      "opus",
+      expect.objectContaining({ allowedConnectionIds: new Set(["claude-2"]) }),
+    );
+    expect(mocks.getProviderCredentials).toHaveBeenCalledWith(
+      "codex",
+      expect.any(Set),
+      "gpt-5",
+      expect.objectContaining({ allowedConnectionIds: new Set(["codex-7"]) }),
+    );
+  });
+
+  it("does not carry a connection subset from one API key to another", async () => {
+    mocks.resolveContext
+      .mockResolvedValueOnce({
+        ...restricted(["claude"]),
+        key: { id: "key-a", name: "Key A" },
+        activeConnections: { claude: ["claude-a"] },
+      })
+      .mockResolvedValueOnce({
+        ...restricted(["claude"]),
+        key: { id: "key-b", name: "Key B" },
+        activeConnections: { claude: ["claude-b"] },
+      });
+    mocks.getModelInfo.mockResolvedValue({ provider: "claude", model: "opus" });
+
+    await handleChat(chatRequest({ model: "cc/opus" }));
+    await handleChat(chatRequest({ model: "cc/opus" }));
+
+    const allowlists = mocks.getProviderCredentials.mock.calls.map((call) => call[3].allowedConnectionIds);
+    expect(allowlists.map((allowed) => [...allowed])).toEqual([["claude-a"], ["claude-b"]]);
+    expect(allowlists[1]).not.toBe(allowlists[0]);
   });
 
   it("filters inactive providers from a combo before dispatch", async () => {
@@ -275,7 +362,12 @@ describe("API key chat provider routing", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.handleComboChat.mock.calls.length).toBe(0);
-    expect(mocks.getProviderCredentials).toHaveBeenCalledWith("claude", expect.any(Set), "a");
+    expect(mocks.getProviderCredentials).toHaveBeenCalledWith(
+      "claude",
+      expect.any(Set),
+      "a",
+      { allowedConnectionIds: null },
+    );
   });
 
   it("applies the same filtering when a combo resolves inside single-model dispatch", async () => {
@@ -322,8 +414,20 @@ describe("API key chat provider routing", () => {
     expect(response.status).toBe(403);
     expect(body.error.code).toBe("provider_not_active_for_api_key");
     expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(2);
-    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(1, "claude", expect.any(Set), "a");
-    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(2, "claude", expect.any(Set), "b");
+    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(
+      1,
+      "claude",
+      expect.any(Set),
+      "a",
+      { allowedConnectionIds: null },
+    );
+    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(
+      2,
+      "claude",
+      expect.any(Set),
+      "b",
+      { allowedConnectionIds: null },
+    );
     expect(
       mocks.getProviderCredentials.mock.calls.some(([provider]) => provider === "codex"),
     ).toBe(false);

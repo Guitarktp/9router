@@ -306,7 +306,7 @@ describe("API-key provider dashboard state", () => {
   });
 
   it("preserves API key context in provider detail links", async () => {
-    const { buildProviderDetailHref, resolveProviderView } = await import(
+    const { buildProviderDetailHref, buildProvidersHref, resolveProviderView } = await import(
       "@/app/(dashboard)/dashboard/providers/providerViewContext.js"
     );
 
@@ -316,6 +316,10 @@ describe("API-key provider dashboard state", () => {
     expect(buildProviderDetailHref("claude", "global")).toBe(
       "/dashboard/providers/claude",
     );
+    expect(buildProvidersHref("key/a")).toBe(
+      "/dashboard/providers?view=key%2Fa",
+    );
+    expect(buildProvidersHref("global")).toBe("/dashboard/providers");
     expect(resolveProviderView("key/a", [{ id: "key/a" }])).toBe("key/a");
     expect(resolveProviderView("unknown", [{ id: "key/a" }])).toBe("global");
   });

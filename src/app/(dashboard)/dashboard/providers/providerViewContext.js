@@ -1,5 +1,11 @@
 export const GLOBAL_PROVIDER_VIEW = "global";
 
+export function buildProvidersHref(selectedView) {
+  return selectedView === GLOBAL_PROVIDER_VIEW
+    ? "/dashboard/providers"
+    : `/dashboard/providers?view=${encodeURIComponent(selectedView)}`;
+}
+
 export function buildProviderDetailHref(providerId, selectedView) {
   const base = `/dashboard/providers/${encodeURIComponent(providerId)}`;
   return selectedView === GLOBAL_PROVIDER_VIEW

@@ -36,6 +36,7 @@ import {
 import {
   GLOBAL_PROVIDER_VIEW,
   buildProviderDetailHref,
+  buildProvidersHref,
 } from "../providerViewContext";
 import {
   loadProviderDetailKeyContext,
@@ -1412,7 +1413,7 @@ export default function ProviderDetailPage() {
     return (
       <div className="text-center py-20">
         <p className="text-text-muted">Provider not found</p>
-        <Link href="/dashboard/providers" className="text-primary mt-4 inline-block">
+        <Link href={buildProvidersHref(selectedView)} className="text-primary mt-4 inline-block">
           Back to Providers
         </Link>
       </div>
@@ -1435,7 +1436,7 @@ export default function ProviderDetailPage() {
       {/* Header */}
       <div className="min-w-0">
         <Link
-          href="/dashboard/providers"
+          href={buildProvidersHref(selectedView)}
           className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-primary transition-colors mb-4"
         >
           <span className="material-symbols-outlined text-lg">arrow_back</span>

@@ -12,6 +12,28 @@ export function parseActiveProviders(value) {
   return [...new Set(parsed)];
 }
 
+export function parseActiveConnections(value) {
+  if (value == null) return null;
+  const parsed = parseJson(value, null);
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+    console.warn("[DB][apiKeys] malformed activeConnections; using inherited mode");
+    return null;
+  }
+  const normalized = {};
+  for (const [providerId, ids] of Object.entries(parsed)) {
+    if (!providerId.trim() || !Array.isArray(ids) || ids.length === 0) {
+      console.warn("[DB][apiKeys] malformed activeConnections; using inherited mode");
+      return null;
+    }
+    if (ids.some((id) => typeof id !== "string" || !id.trim())) {
+      console.warn("[DB][apiKeys] malformed activeConnections; using inherited mode");
+      return null;
+    }
+    normalized[providerId] = [...new Set(ids)];
+  }
+  return Object.keys(normalized).length === 0 ? null : normalized;
+}
+
 function rowToKey(row) {
   if (!row) return null;
   return {
@@ -21,6 +43,7 @@ function rowToKey(row) {
     machineId: row.machineId,
     isActive: row.isActive === 1 || row.isActive === true,
     activeProviders: parseActiveProviders(row.activeProviders),
+    activeConnections: parseActiveConnections(row.activeConnections),
     createdAt: row.createdAt,
   };
 }
@@ -55,11 +78,12 @@ export async function createApiKey(name, machineId) {
     machineId,
     isActive: true,
     activeProviders: null,
+    activeConnections: null,
     createdAt: new Date().toISOString(),
   };
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, activeProviders, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, null, apiKey.createdAt]
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, activeProviders, activeConnections, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, null, null, apiKey.createdAt]
   );
   return apiKey;
 }
@@ -79,8 +103,8 @@ export async function updateApiKey(id, data) {
     if (!row) return;
     const merged = { ...rowToKey(row), ...data };
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, activeProviders = ? WHERE id = ?`,
-      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.activeProviders === null ? null : stringifyJson(merged.activeProviders), id]
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, activeProviders = ?, activeConnections = ? WHERE id = ?`,
+      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.activeProviders === null ? null : stringifyJson(merged.activeProviders), merged.activeConnections === null ? null : stringifyJson(merged.activeConnections), id]
     );
     result = merged;
   });

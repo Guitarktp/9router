@@ -1,7 +1,7 @@
 // Public API barrel — all DB functions
 import { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
-import { parseActiveProviders } from "./repos/apiKeysRepo.js";
+import { parseActiveProviders, parseActiveConnections } from "./repos/apiKeysRepo.js";
 
 // Settings
 export {
@@ -78,7 +78,7 @@ export async function exportDb() {
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, activeProviders: parseActiveProviders(r.activeProviders), createdAt: r.createdAt })),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, activeProviders: parseActiveProviders(r.activeProviders), activeConnections: parseActiveConnections(r.activeConnections), createdAt: r.createdAt })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
@@ -140,9 +140,12 @@ export async function importDb(payload) {
       const activeProviders = Array.isArray(k.activeProviders)
         ? parseActiveProviders(k.activeProviders)
         : null;
+      const activeConnections = parseActiveConnections(k.activeConnections);
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, activeProviders, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, activeProviders === null ? null : stringifyJson(activeProviders), k.createdAt || new Date().toISOString()]
+        `INSERT OR REPLACE INTO apiKeys(
+          id, key, name, machineId, isActive, activeProviders, activeConnections, createdAt
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, activeProviders === null ? null : stringifyJson(activeProviders), activeConnections === null ? null : stringifyJson(activeConnections), k.createdAt || new Date().toISOString()]
       );
     }
     for (const c of payload.combos || []) {

@@ -33,6 +33,32 @@ afterEach(() => {
 });
 
 describe("API-key provider persistence", () => {
+  it("defaults new keys to inherited connection mode", async () => {
+    const db = await import("@/lib/db/index.js");
+    const key = await db.createApiKey("default-connections", "machine-1");
+    expect(key.activeConnections).toBeNull();
+    expect((await db.getApiKeyById(key.id)).activeConnections).toBeNull();
+  });
+
+  it("round-trips connection mappings through export/import", async () => {
+    const db = await import("@/lib/db/index.js");
+    const key = await db.createApiKey("scoped", "machine-1");
+    const policy = { claude: ["claude-1", "claude-3"] };
+    await db.updateApiKey(key.id, { activeConnections: policy });
+    const payload = await db.exportDb();
+    expect(payload.apiKeys[0].activeConnections).toEqual(policy);
+    await db.importDb(payload);
+    expect((await db.getApiKeyById(key.id)).activeConnections).toEqual(policy);
+  });
+
+  it("treats malformed stored connection policy as inherited", async () => {
+    const db = await import("@/lib/db/index.js");
+    const key = await db.createApiKey("malformed", "machine-1");
+    const adapter = await (await import("@/lib/db/driver.js")).getAdapter();
+    adapter.run("UPDATE apiKeys SET activeConnections = ? WHERE id = ?", ["[]", key.id]);
+    expect((await db.getApiKeyById(key.id)).activeConnections).toBeNull();
+  });
+
   it("defaults new keys to inherited all-provider mode", async () => {
     const db = await import("@/lib/db/index.js");
     const key = await db.createApiKey("default", "machine-1");

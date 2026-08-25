@@ -11,6 +11,239 @@ function deferred() {
 }
 
 describe("API-key provider dashboard state", () => {
+  it("materializes only globally active rows for inherited connection mode", async () => {
+    const { materializeConnectionSelection } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyConnectionRoutingState.js"
+    );
+
+    expect(
+      materializeConnectionSelection(
+        { activeConnections: null },
+        "claude",
+        [
+          { id: "c1", isActive: true },
+          { id: "c2", isActive: false },
+        ],
+      ),
+    ).toEqual(["c1"]);
+  });
+
+  it("keeps an explicitly empty custom connection selection empty", async () => {
+    const {
+      getProviderConnectionMode,
+      materializeConnectionSelection,
+      effectiveConnectionIds,
+    } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyConnectionRoutingState.js"
+    );
+    const apiKey = { activeConnections: { claude: [] } };
+    const connections = [{ id: "c1", isActive: true }];
+
+    expect(getProviderConnectionMode(apiKey, "claude")).toBe("custom");
+    expect(materializeConnectionSelection(apiKey, "claude", connections)).toEqual([]);
+    expect(effectiveConnectionIds(apiKey, "claude", connections)).toEqual([]);
+  });
+
+  it("applies connection mode and selection transitions without enabling disabled rows", async () => {
+    const {
+      setProviderConnectionMode,
+      nextActiveConnections,
+      effectiveConnectionIds,
+    } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyConnectionRoutingState.js"
+    );
+    const connections = [
+      { id: "c1", isActive: true },
+      { id: "c2", isActive: false },
+    ];
+
+    expect(
+      setProviderConnectionMode(
+        { activeConnections: null },
+        "claude",
+        "custom",
+        connections,
+      ),
+    ).toEqual({ claude: ["c1"] });
+    expect(
+      setProviderConnectionMode(
+        { activeConnections: { claude: ["c1"] } },
+        "claude",
+        "inherit",
+        connections,
+      ),
+    ).toBeNull();
+    expect(() =>
+      nextActiveConnections(
+        { activeConnections: { claude: ["c1"] } },
+        "claude",
+        "c1",
+        false,
+        [{ id: "c1", isActive: true }],
+      ),
+    ).toThrowError(/at least one connection/i);
+    expect(() =>
+      nextActiveConnections(
+        { activeConnections: { claude: ["c1"] } },
+        "claude",
+        "c2",
+        true,
+        connections,
+      ),
+    ).toThrowError(/globally disabled/i);
+    expect(
+      effectiveConnectionIds(
+        { activeConnections: { claude: ["c1", "c2"] } },
+        "claude",
+        connections,
+      ),
+    ).toEqual(["c1"]);
+  });
+
+  it("rejects switching to custom mode when every connection is globally disabled", async () => {
+    const { setProviderConnectionMode } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyConnectionRoutingState.js"
+    );
+
+    expect(() =>
+      setProviderConnectionMode(
+        { activeConnections: null },
+        "claude",
+        "custom",
+        [{ id: "c1", isActive: false }],
+      ),
+    ).toThrowError(/at least one connection/i);
+  });
+
+  it("saves active connection mappings and surfaces API errors", async () => {
+    const { saveActiveConnections } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyConnectionRoutingState.js"
+    );
+    let sentRequest;
+    const okFetch = async (url, options) => {
+      sentRequest = { url, options };
+      return Response.json({ key: { id: "k1", activeConnections: { claude: ["c1"] } } });
+    };
+
+    await expect(
+      saveActiveConnections("k1", { claude: ["c1"] }, okFetch),
+    ).resolves.toMatchObject({ activeConnections: { claude: ["c1"] } });
+    expect(sentRequest).toMatchObject({
+      url: "/api/keys/k1",
+      options: { method: "PUT", body: JSON.stringify({ activeConnections: { claude: ["c1"] } }) },
+    });
+
+    const badFetch = async () =>
+      Response.json({ error: { message: "Connection save failed" } }, { status: 500 });
+    await expect(
+      saveActiveConnections("k1", { claude: ["c1"] }, badFetch),
+    ).rejects.toThrow("Connection save failed");
+  });
+
+  it("restores the last confirmed key when the newest connection save is rejected", async () => {
+    const { createActiveConnectionSaveCoordinator } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyConnectionRoutingState.js"
+    );
+    const firstSave = deferred();
+    const secondSave = deferred();
+    const saveImpl = vi
+      .fn()
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockImplementationOnce(() => secondSave.promise);
+    const coordinator = createActiveConnectionSaveCoordinator(saveImpl);
+    const confirmed = { id: "keyA", activeConnections: { claude: ["c1"] } };
+    let keys = [confirmed];
+    const setApiKeys = (update) => {
+      keys = update(keys);
+    };
+
+    const firstOptimistic = { id: "keyA", activeConnections: { claude: ["c2"] } };
+    setApiKeys(() => [firstOptimistic]);
+    const olderOperation = coordinator.save({
+      keyId: "keyA",
+      activeConnections: { claude: ["c2"] },
+      previousKey: confirmed,
+      setApiKeys,
+    });
+
+    const secondOptimistic = { id: "keyA", activeConnections: { claude: ["c3"] } };
+    setApiKeys(() => [secondOptimistic]);
+    const newerOperation = coordinator.save({
+      keyId: "keyA",
+      activeConnections: { claude: ["c3"] },
+      previousKey: firstOptimistic,
+      setApiKeys,
+    });
+
+    await vi.waitFor(() => expect(saveImpl).toHaveBeenCalledTimes(1));
+    firstSave.resolve(firstOptimistic);
+    await expect(olderOperation).resolves.toMatchObject({ status: "stale" });
+    await vi.waitFor(() => expect(saveImpl).toHaveBeenCalledTimes(2));
+    secondSave.reject(new Error("Newest save failed"));
+
+    await expect(newerOperation).rejects.toThrow("Newest save failed");
+    expect(keys).toEqual([firstOptimistic]);
+  });
+
+  it("returns stale for an older connection success without overwriting a newer optimistic value", async () => {
+    const { createActiveConnectionSaveCoordinator } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyConnectionRoutingState.js"
+    );
+    const firstSave = deferred();
+    const secondSave = deferred();
+    const saveImpl = vi
+      .fn()
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockImplementationOnce(() => secondSave.promise);
+    const coordinator = createActiveConnectionSaveCoordinator(saveImpl);
+    const confirmed = { id: "keyA", activeConnections: { claude: ["c1"] } };
+    let keys = [confirmed];
+    const setApiKeys = (update) => {
+      keys = update(keys);
+    };
+
+    const firstOptimistic = { id: "keyA", activeConnections: { claude: ["c2"] } };
+    setApiKeys(() => [firstOptimistic]);
+    const olderOperation = coordinator.save({
+      keyId: "keyA",
+      activeConnections: { claude: ["c2"] },
+      previousKey: confirmed,
+      setApiKeys,
+    });
+    const secondOptimistic = { id: "keyA", activeConnections: { claude: ["c3"] } };
+    setApiKeys(() => [secondOptimistic]);
+    const newerOperation = coordinator.save({
+      keyId: "keyA",
+      activeConnections: { claude: ["c3"] },
+      previousKey: firstOptimistic,
+      setApiKeys,
+    });
+
+    await vi.waitFor(() => expect(saveImpl).toHaveBeenCalledTimes(1));
+    firstSave.resolve(firstOptimistic);
+    await expect(olderOperation).resolves.toMatchObject({ status: "stale" });
+    expect(keys).toEqual([secondOptimistic]);
+    await vi.waitFor(() => expect(saveImpl).toHaveBeenCalledTimes(2));
+    secondSave.resolve(secondOptimistic);
+    await expect(newerOperation).resolves.toMatchObject({ status: "saved" });
+    expect(keys).toEqual([secondOptimistic]);
+  });
+
+  it("preserves API key context in provider detail links", async () => {
+    const { buildProviderDetailHref, resolveProviderView } = await import(
+      "@/app/(dashboard)/dashboard/providers/providerViewContext.js"
+    );
+
+    expect(buildProviderDetailHref("claude", "key/a")).toBe(
+      "/dashboard/providers/claude?view=key%2Fa",
+    );
+    expect(buildProviderDetailHref("claude", "global")).toBe(
+      "/dashboard/providers/claude",
+    );
+    expect(resolveProviderView("key/a", [{ id: "key/a" }])).toBe("key/a");
+    expect(resolveProviderView("unknown", [{ id: "key/a" }])).toBe("global");
+  });
+
   it("materializes all current IDs for an inherited key", async () => {
     const { materializeActiveProviders } = await import(
       "@/app/(dashboard)/dashboard/providers/apiKeyRoutingState.js"

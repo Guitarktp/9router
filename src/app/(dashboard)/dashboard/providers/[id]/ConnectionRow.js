@@ -6,7 +6,24 @@ import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 
-export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
+export default function ConnectionRow({
+  connection,
+  viewMode = "global",
+  keySelected = false,
+  onToggleKeySelected,
+  proxyPools,
+  isOAuth,
+  isFirst,
+  isLast,
+  onMoveUp,
+  onMoveDown,
+  onToggleActive,
+  onUpdateProxy,
+  onEdit,
+  onDelete,
+  oneByOneStatus = null,
+  autoPing = null,
+}) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
   const proxyDropdownRef = useRef(null);
@@ -26,6 +43,14 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
   const autoPingTooltip = autoPing?.provider === "codex"
     ? "Auto-starts the next 5h Codex window after reset by sending a tiny gpt-5.5 request. Consumes a small amount of quota."
     : "When your 5h quota runs out, auto-sends a request the moment it resets so a new window starts right away.";
+  const isApiKeyView = viewMode === "api-key";
+  const keyToggleTitle = connection.isActive === false
+    ? "Globally disabled"
+    : !onToggleKeySelected
+      ? "Provider inactive for this API key"
+      : keySelected
+        ? "Remove from this API key"
+        : "Use for this API key";
 
   let maskedProxyUrl = "";
   if (boundProxyPool?.proxyUrl || connection.providerSpecificData?.connectionProxyUrl) {
@@ -138,23 +163,24 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
   return (
     <div className={`group flex min-w-0 flex-col gap-3 rounded-lg p-2 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02] sm:flex-row sm:items-center sm:justify-between ${connection.isActive === false ? "opacity-60" : ""}`}>
       <div className="flex min-w-0 flex-1 items-start gap-2 sm:items-center sm:gap-3">
-        {/* Priority arrows */}
-        <div className="flex shrink-0 flex-col">
-          <button
-            onClick={onMoveUp}
-            disabled={isFirst}
-            className={`p-0.5 rounded ${isFirst ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
-          >
-            <span className="material-symbols-outlined text-sm">keyboard_arrow_up</span>
-          </button>
-          <button
-            onClick={onMoveDown}
-            disabled={isLast}
-            className={`p-0.5 rounded ${isLast ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
-          >
-            <span className="material-symbols-outlined text-sm">keyboard_arrow_down</span>
-          </button>
-        </div>
+        {!isApiKeyView && (
+          <div className="flex shrink-0 flex-col">
+            <button
+              onClick={onMoveUp}
+              disabled={isFirst}
+              className={`p-0.5 rounded ${isFirst ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
+            >
+              <span className="material-symbols-outlined text-sm">keyboard_arrow_up</span>
+            </button>
+            <button
+              onClick={onMoveDown}
+              disabled={isLast}
+              className={`p-0.5 rounded ${isLast ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
+            >
+              <span className="material-symbols-outlined text-sm">keyboard_arrow_down</span>
+            </button>
+          </div>
+        )}
         <span className="material-symbols-outlined shrink-0 text-base text-text-muted">
           {authIcon}
         </span>
@@ -164,13 +190,17 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
             <p className="text-xs text-text-muted truncate">{secondaryDisplayName}</p>
           )}
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 sm:gap-2">
-            <Badge variant={getStatusVariant()} size="sm" dot>
-              {connection.isActive === false ? "disabled" : (effectiveStatus || "Unknown")}
+            <Badge variant={isApiKeyView && connection.isActive === false ? "error" : getStatusVariant()} size="sm" dot>
+              {isApiKeyView && connection.isActive === false
+                ? "Globally disabled"
+                : connection.isActive === false
+                  ? "disabled"
+                  : (effectiveStatus || "Unknown")}
             </Badge>
             <Badge variant="default" size="sm">
               {authLabel}
             </Badge>
-            {hasAnyProxy && (
+            {!isApiKeyView && hasAnyProxy && (
               <Badge variant={proxyBadgeVariant} size="sm">
                 Proxy
               </Badge>
@@ -181,17 +211,17 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
                 {connection.lastError}
               </span>
             )}
-            <span className="text-xs text-text-muted">#{connection.priority}</span>
-            {connection.globalPriority && (
+            {!isApiKeyView && <span className="text-xs text-text-muted">#{connection.priority}</span>}
+            {!isApiKeyView && connection.globalPriority && (
               <span className="text-xs text-text-muted">Auto: {connection.globalPriority}</span>
             )}
-            {getOneByOneLabel() && (
+            {!isApiKeyView && getOneByOneLabel() && (
               <Badge variant={getOneByOneVariant()} size="sm">
                 {getOneByOneLabel()}
               </Badge>
             )}
           </div>
-          {hasAnyProxy && (
+          {!isApiKeyView && hasAnyProxy && (
             <div className="mt-1 flex items-center gap-2 flex-wrap">
               <span className="max-w-full truncate text-[11px] text-text-muted sm:max-w-[420px]" title={proxyDisplayText}>
                 {proxyDisplayText}
@@ -211,7 +241,20 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
         </div>
       </div>
       <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
-        <div className="grid flex-1 grid-cols-3 gap-1 sm:flex sm:flex-none">
+        {isApiKeyView ? (
+          <div title={keyToggleTitle}>
+            <Toggle
+              size="sm"
+              checked={keySelected}
+              disabled={!onToggleKeySelected || (connection.isActive === false && !keySelected)}
+              onChange={onToggleKeySelected}
+              aria-label={keyToggleTitle}
+              title={keyToggleTitle}
+            />
+          </div>
+        ) : (
+          <>
+            <div className="grid flex-1 grid-cols-3 gap-1 sm:flex sm:flex-none">
           {/* Proxy button with inline dropdown */}
           {(proxyPools || []).length > 0 && (
             <div className="relative" ref={proxyDropdownRef}>
@@ -265,13 +308,15 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
             <span className="material-symbols-outlined text-[18px]">delete</span>
             <span className="text-[10px] leading-tight">Delete</span>
           </button>
-        </div>
-        <Toggle
-          size="sm"
-          checked={connection.isActive ?? true}
-          onChange={onToggleActive}
-          title={(connection.isActive ?? true) ? "Disable connection" : "Enable connection"}
-        />
+            </div>
+            <Toggle
+              size="sm"
+              checked={connection.isActive ?? true}
+              onChange={onToggleActive}
+              title={(connection.isActive ?? true) ? "Disable connection" : "Enable connection"}
+            />
+          </>
+        )}
       </div>
     </div>
   );
@@ -290,6 +335,9 @@ ConnectionRow.propTypes = {
     priority: PropTypes.number,
     globalPriority: PropTypes.number,
   }).isRequired,
+  viewMode: PropTypes.oneOf(["global", "api-key"]),
+  keySelected: PropTypes.bool,
+  onToggleKeySelected: PropTypes.func,
   proxyPools: PropTypes.arrayOf(PropTypes.shape({
     id: PropTypes.string,
     name: PropTypes.string,

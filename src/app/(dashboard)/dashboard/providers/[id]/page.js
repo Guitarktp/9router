@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { getProviderIconSrc, markProviderIconMissing } from "@/shared/utils/providerIcon";
@@ -11,6 +11,7 @@ import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
+import { useNotificationStore } from "@/store/notificationStore";
 import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
@@ -22,6 +23,21 @@ import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
+import ProviderRoutingContextBar from "../components/ProviderRoutingContextBar";
+import {
+  ConnectionSelectionError,
+  createActiveConnectionSaveCoordinator,
+  effectiveConnectionIds,
+  getProviderConnectionMode,
+  materializeConnectionSelection,
+  nextActiveConnections,
+  setProviderConnectionMode,
+} from "../apiKeyConnectionRoutingState";
+import {
+  GLOBAL_PROVIDER_VIEW,
+  buildProviderDetailHref,
+  resolveProviderView,
+} from "../providerViewContext";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
 
@@ -37,10 +53,21 @@ function sleep(ms) {
 export default function ProviderDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const providerId = params.id;
   const { getCaps } = useModelCaps();
   const [connections, setConnections] = useState([]);
+  const [apiKeys, setApiKeys] = useState([]);
+  const requestedView = searchParams.get("view") || GLOBAL_PROVIDER_VIEW;
+  const [selectedViewInput, setSelectedView] = useState(requestedView);
+  const saveCoordinatorRef = useRef(null);
+  if (saveCoordinatorRef.current === null) {
+    saveCoordinatorRef.current = createActiveConnectionSaveCoordinator();
+  }
   const [loading, setLoading] = useState(true);
+  const selectedView = loading
+    ? GLOBAL_PROVIDER_VIEW
+    : resolveProviderView(selectedViewInput, apiKeys);
   const [providerNode, setProviderNode] = useState(null);
   const [proxyPools, setProxyPools] = useState([]);
   const [showOAuthModal, setShowOAuthModal] = useState(false);
@@ -80,6 +107,7 @@ export default function ProviderDetailPage() {
   const stopOneByOneRef = useRef(false);
   const [importingQoderModels, setImportingQoderModels] = useState(false);
   const { copied, copy } = useCopyToClipboard();
+  const notify = useNotificationStore();
 
   const AG_RISK_STORAGE_KEY = "ag_risk_confirmed";
 
@@ -292,22 +320,27 @@ export default function ProviderDetailPage() {
 
   const fetchConnections = useCallback(async () => {
     try {
-      const [connectionsRes, nodesRes, proxyPoolsRes, settingsRes] = await Promise.all([
+      const [connectionsRes, nodesRes, proxyPoolsRes, settingsRes, keysRes] = await Promise.all([
         fetch("/api/providers", { cache: "no-store" }),
         fetch("/api/provider-nodes", { cache: "no-store" }),
         fetch("/api/proxy-pools?isActive=true", { cache: "no-store" }),
         fetch("/api/settings", { cache: "no-store" }),
+        fetch("/api/keys", { cache: "no-store" }),
       ]);
       const connectionsData = await connectionsRes.json();
       const nodesData = await nodesRes.json();
       const proxyPoolsData = await proxyPoolsRes.json();
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
+      const keysData = await keysRes.json();
       if (connectionsRes.ok) {
         const filtered = (connectionsData.connections || []).filter(c => c.provider === providerId);
         setConnections(filtered);
       }
       if (proxyPoolsRes.ok) {
         setProxyPools(proxyPoolsData.proxyPools || []);
+      }
+      if (keysRes.ok) {
+        setApiKeys(keysData.keys || []);
       }
       // Load per-provider strategy override
       const override = (settingsData.providerStrategies || {})[providerId] || {};
@@ -452,17 +485,122 @@ export default function ProviderDetailPage() {
   };
 
   useEffect(() => {
+    // These callbacks perform asynchronous fetches before updating state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchConnections();
     fetchAliases();
     fetchCustomModels();
     fetchDisabledModels();
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
 
+  useEffect(() => {
+    // Keep browser back/forward navigation synchronized with the selector.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedView(requestedView);
+  }, [requestedView]);
+
+  const selectedApiKey = selectedView === GLOBAL_PROVIDER_VIEW
+    ? null
+    : apiKeys.find((key) => key.id === selectedView) || null;
+  const connectionMode = selectedApiKey
+    ? getProviderConnectionMode(selectedApiKey, providerId)
+    : "inherit";
+  const selectedKeyConnectionIds = selectedApiKey
+    ? materializeConnectionSelection(selectedApiKey, providerId, connections)
+    : [];
+  const effectiveKeyConnectionIds = selectedApiKey
+    ? effectiveConnectionIds(selectedApiKey, providerId, connections)
+    : [];
+  const providerActiveForKey = selectedApiKey?.activeProviders === null
+    || selectedApiKey?.activeProviders?.includes(providerId);
+
+  const handleSelectedViewChange = (nextView) => {
+    setSelectedView(nextView);
+    if (nextView !== GLOBAL_PROVIDER_VIEW) {
+      setSelectedConnectionIds([]);
+      setShowBulkProxyModal(false);
+    }
+    router.replace(buildProviderDetailHref(providerId, nextView), { scroll: false });
+  };
+
+  const saveSelectedKeyConnections = async (activeConnections, previousKey) => {
+    setApiKeys((current) =>
+      current.map((key) =>
+        key.id === previousKey.id ? { ...key, activeConnections } : key,
+      ),
+    );
+
+    try {
+      const result = await saveCoordinatorRef.current.save({
+        keyId: previousKey.id,
+        activeConnections,
+        previousKey,
+        setApiKeys,
+      });
+      if (result.status === "saved") notify.success("Connection routing saved");
+    } catch (error) {
+      notify.error(error.message || "Failed to save connection routing");
+    }
+  };
+
+  const handleConnectionModeChange = (mode) => {
+    if (!selectedApiKey || !providerActiveForKey || mode === connectionMode) return;
+
+    try {
+      const activeConnections = setProviderConnectionMode(
+        selectedApiKey,
+        providerId,
+        mode,
+        connections,
+      );
+      saveSelectedKeyConnections(activeConnections, selectedApiKey);
+    } catch (error) {
+      if (error instanceof ConnectionSelectionError) {
+        notify.warning(error.message);
+        return;
+      }
+      throw error;
+    }
+  };
+
+  const handleKeyConnectionToggle = (connectionId, selected) => {
+    if (!selectedApiKey || !providerActiveForKey) return;
+
+    try {
+      const connection = connections.find(({ id }) => id === connectionId);
+      const selectedConnectionIds = !selected && connection?.isActive === false
+        ? materializeConnectionSelection(
+            selectedApiKey,
+            providerId,
+            connections,
+          ).filter((id) => id !== connectionId)
+        : nextActiveConnections(
+            selectedApiKey,
+            providerId,
+            connectionId,
+            selected,
+            connections,
+          );
+      const activeConnections = {
+        ...(selectedApiKey.activeConnections || {}),
+        [providerId]: selectedConnectionIds,
+      };
+      saveSelectedKeyConnections(activeConnections, selectedApiKey);
+    } catch (error) {
+      if (error instanceof ConnectionSelectionError) {
+        notify.warning(error.message);
+        return;
+      }
+      throw error;
+    }
+  };
+
   // Cursor's model availability is account-specific and changes frequently.
   // Load the active account's live catalog for the dashboard; the static
   // registry remains the fallback while the request is pending or unavailable.
   useEffect(() => {
     if (providerId !== "cursor") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLiveModels([]);
       return;
     }
@@ -867,6 +1005,7 @@ export default function ProviderDetailPage() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedConnectionIds((prev) => prev.filter((id) => connections.some((conn) => conn.id === id)));
   }, [connections]);
 
@@ -945,17 +1084,24 @@ export default function ProviderDetailPage() {
       {connections
         .map((conn, index) => (
           <div key={conn.id} className="flex min-w-0 items-stretch">
-            <div className="flex shrink-0 items-center pl-1 sm:pl-2">
-              <input
-                type="checkbox"
-                checked={isSelected(conn.id)}
-                onChange={() => toggleSelectConnection(conn.id)}
-                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-              />
-            </div>
+            {!selectedApiKey && (
+              <div className="flex shrink-0 items-center pl-1 sm:pl-2">
+                <input
+                  type="checkbox"
+                  checked={isSelected(conn.id)}
+                  onChange={() => toggleSelectConnection(conn.id)}
+                  className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                />
+              </div>
+            )}
             <div className="flex-1 min-w-0">
               <ConnectionRow
                 connection={conn}
+                viewMode={selectedApiKey ? "api-key" : "global"}
+                keySelected={selectedKeyConnectionIds.includes(conn.id)}
+                onToggleKeySelected={providerActiveForKey
+                  ? (selected) => handleKeyConnectionToggle(conn.id, selected)
+                  : undefined}
                 proxyPools={proxyPools}
                 isOAuth={isOAuth}
                 isFirst={index === 0}
@@ -963,7 +1109,7 @@ export default function ProviderDetailPage() {
                 onMoveUp={() => handleSwapPriority(index, index - 1)}
                 onMoveDown={() => handleSwapPriority(index, index + 1)}
                 onToggleActive={(isActive) => handleUpdateConnectionStatus(conn.id, isActive)}
-                autoPing={AUTO_PING_SETTINGS_KEYS[providerId] && conn.authType === "oauth" ? {
+                autoPing={!selectedApiKey && AUTO_PING_SETTINGS_KEYS[providerId] && conn.authType === "oauth" ? {
                   on: autoPing.connections[conn.id] === true,
                   onToggle: (on) => handleAutoPingConnection(conn.id, on),
                   provider: providerId,
@@ -991,7 +1137,7 @@ export default function ProviderDetailPage() {
                   setShowEditModal(true);
                 }}
                 onDelete={() => handleDelete(conn.id)}
-                oneByOneStatus={oneByOneResults[conn.id] || null}
+                oneByOneStatus={selectedApiKey ? null : oneByOneResults[conn.id] || null}
               />
             </div>
           </div>
@@ -1365,7 +1511,7 @@ export default function ProviderDetailPage() {
                 {isAnthropicCompatible ? "messages" : (providerNode.apiType === "responses" ? "responses" : "chat/completions")}
               </p>
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
+            {!selectedApiKey && <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
               <Button
                 size="sm"
                 icon="add"
@@ -1411,19 +1557,46 @@ export default function ProviderDetailPage() {
               >
                 Delete
               </Button>
-            </div>
+            </div>}
           </div>
         </Card>
       )}
 
+      <ProviderRoutingContextBar
+        apiKeys={apiKeys}
+        selectedView={selectedView}
+        onChange={handleSelectedViewChange}
+        activeCount={effectiveKeyConnectionIds.length}
+        totalCount={connections.length}
+      />
+
       {/* Connections */}
-      {isFreeNoAuth ? (
+      {isFreeNoAuth && !selectedApiKey ? (
         <NoAuthProxyCard providerId={providerId} />
       ) : (
         <Card>
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-semibold">Connections</h2>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+            {selectedApiKey ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant={connectionMode === "inherit" ? "primary" : "secondary"}
+                  onClick={() => handleConnectionModeChange("inherit")}
+                  disabled={!providerActiveForKey}
+                >
+                  Use Global
+                </Button>
+                <Button
+                  size="sm"
+                  variant={connectionMode === "custom" ? "primary" : "secondary"}
+                  onClick={() => handleConnectionModeChange("custom")}
+                  disabled={!providerActiveForKey}
+                >
+                  Custom connections
+                </Button>
+              </div>
+            ) : <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
               {connections.length > 0 && proxyPools.length > 0 && (
                 <Button
                   size="sm"
@@ -1489,8 +1662,21 @@ export default function ProviderDetailPage() {
                   </div>
                 )}
               </div>
-            </div>
+            </div>}
           </div>
+
+          {selectedApiKey && !providerActiveForKey && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+              <span className="material-symbols-outlined shrink-0 text-lg">warning</span>
+              <p>This provider is inactive for this API key. Its connection policy is visible but cannot take effect.</p>
+            </div>
+          )}
+          {selectedApiKey && connectionMode === "custom" && effectiveKeyConnectionIds.length === 0 && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+              <span className="material-symbols-outlined shrink-0 text-lg">warning</span>
+              <p>No selected connections are globally active. Select an active connection or switch to Use Global.</p>
+            </div>
+          )}
 
           {connections.length === 0 ? (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1507,7 +1693,7 @@ export default function ProviderDetailPage() {
                   )}
                 </div>
               </div>
-              <div className="flex gap-2">
+              {!selectedApiKey && <div className="flex gap-2">
                 {hasDualAuthModes ? (
                   <>
                     <Button size="sm" icon="lock" variant="secondary" onClick={triggerOAuthConnection}>
@@ -1538,11 +1724,11 @@ export default function ProviderDetailPage() {
                     </Button>
                   </>
                 )}
-              </div>
+              </div>}
             </div>
           ) : (
             <>
-              {oneByOneSummary && (
+              {!selectedApiKey && oneByOneSummary && (
                 <div className="mb-4 rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2 text-xs text-text-muted dark:border-white/10 dark:bg-white/[0.03]">
                   <div className="flex flex-wrap items-center gap-3">
                     <span>Total: {oneByOneSummary.total}</span>
@@ -1558,7 +1744,7 @@ export default function ProviderDetailPage() {
                   </div>
                 </div>
               )}
-              {connections.length > 0 && (
+              {!selectedApiKey && connections.length > 0 && (
                 <div className="mb-3 flex items-center gap-2 border-b border-black/[0.03] pb-2 dark:border-white/[0.03]">
                   <label className="flex cursor-pointer items-center gap-1.5 text-xs text-text-muted hover:text-primary">
                     <input
@@ -1572,7 +1758,7 @@ export default function ProviderDetailPage() {
                 </div>
               )}
               {connectionsList}
-              {!isCompatible && (
+              {!selectedApiKey && !isCompatible && (
                 <div className="mt-4 grid grid-cols-1 gap-2 sm:flex">
                   {providerId === "iflow" && (
                     <Button
@@ -1683,7 +1869,7 @@ export default function ProviderDetailPage() {
         {renderModelsSection()}
       </Card>
 
-      {bulkActionModal}
+      {!selectedApiKey && bulkActionModal}
 
       {/* Modals */}
       {providerId === "kiro" ? (

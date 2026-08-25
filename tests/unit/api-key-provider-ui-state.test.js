@@ -44,6 +44,17 @@ describe("API-key provider dashboard state", () => {
     expect(effectiveConnectionIds(apiKey, "claude", connections)).toEqual([]);
   });
 
+  it("keeps a disabled saved selection without making it effective", async () => {
+    const { materializeConnectionSelection, effectiveConnectionIds } = await import(
+      "@/app/(dashboard)/dashboard/providers/apiKeyConnectionRoutingState.js"
+    );
+    const key = { activeConnections: { claude: ["c1"] } };
+    const connections = [{ id: "c1", isActive: false }];
+
+    expect(materializeConnectionSelection(key, "claude", connections)).toEqual(["c1"]);
+    expect(effectiveConnectionIds(key, "claude", connections)).toEqual([]);
+  });
+
   it("applies connection mode and selection transitions without enabling disabled rows", async () => {
     const {
       setProviderConnectionMode,

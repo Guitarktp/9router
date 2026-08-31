@@ -1,6 +1,7 @@
 import { getClaudeWeekendWindow } from "./window.js";
+import { CLAUDE_WEEKEND_MAX_OBSERVATION_AGE_MS } from "./constants.js";
 
-export const CLAUDE_WEEKEND_MAX_OBSERVATION_AGE_MS = 15 * 60 * 1000;
+export { CLAUDE_WEEKEND_MAX_OBSERVATION_AGE_MS };
 
 export const CLAUDE_WEEKEND_REASON = Object.freeze({
   ELIGIBLE: "eligible",

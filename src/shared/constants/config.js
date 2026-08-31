@@ -1,4 +1,5 @@
 import pkg from "../../../package.json" with { type: "json" };
+import { CLAUDE_WEEKEND_ROUTING_CONFIG } from "../services/claudeWeekendRouting/constants.js";
 
 // App configuration
 export const APP_CONFIG = {
@@ -92,12 +93,7 @@ export const QUOTA_AUTOPING_CONFIG = {
   },
 };
 
-export const CLAUDE_WEEKEND_ROUTING_CONFIG = Object.freeze({
-  timezone: "Asia/Bangkok",
-  quotaKey: "weekly (7d)",
-  tickIntervalMs: 10 * 60 * 1000,
-  maxObservationAgeMs: 15 * 60 * 1000,
-});
+export { CLAUDE_WEEKEND_ROUTING_CONFIG };
 
 // Re-export from providers.js for backward compatibility
 export {

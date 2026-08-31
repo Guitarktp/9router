@@ -1,26 +1,42 @@
 import { NextResponse } from "next/server";
 import { getApiKeys, getProviderConnections } from "@/lib/localDb";
 import { CLAUDE_WEEKEND_ROUTING_CONFIG } from "@/shared/constants/config";
-import { getClaudeWeekendRoutingSnapshot } from "@/shared/services/claudeWeekendRouting/service.js";
-import { resolveClaudeWeekendRouting } from "@/shared/services/claudeWeekendRouting/policy.js";
+import { getClaudeWeekendRoutingSnapshot } from "@/shared/services/claudeWeekendRouting/state.js";
+import {
+  evaluateClaudeWeeklyQuota,
+  resolveClaudeWeekendRouting,
+} from "@/shared/services/claudeWeekendRouting/policy.js";
+import { getClaudeWeekendWindow } from "@/shared/services/claudeWeekendRouting/window.js";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function projectConnectionStatus(status) {
+function projectConnectionStatus(status, now, windowEndAt) {
+  const evaluated = status?.eligible === true
+    ? evaluateClaudeWeeklyQuota({
+      quota: status,
+      observedAt: status.observedAt,
+      now,
+      windowEndAt,
+      maxAgeMs: CLAUDE_WEEKEND_ROUTING_CONFIG.maxObservationAgeMs,
+    })
+    : status;
   const result = {
-    eligible: status?.eligible === true,
-    reason: typeof status?.reason === "string" ? status.reason : "quota_unavailable",
+    eligible: evaluated?.eligible === true,
+    reason: typeof evaluated?.reason === "string" ? evaluated.reason : "quota_unavailable",
   };
-  if (Number.isFinite(Number(status?.remaining))) result.remaining = Number(status.remaining);
-  if (typeof status?.resetAt === "string") result.resetAt = status.resetAt;
-  if (typeof status?.observedAt === "string") result.observedAt = status.observedAt;
+  if (Number.isFinite(Number(evaluated?.remaining))) result.remaining = Number(evaluated.remaining);
+  if (typeof evaluated?.resetAt === "string") result.resetAt = evaluated.resetAt;
+  if (typeof evaluated?.observedAt === "string") result.observedAt = evaluated.observedAt;
   return result;
 }
 
-function projectConnections(connections) {
+function projectConnections(connections, now, windowEndAt) {
   return Object.fromEntries(
-    Object.entries(connections || {}).map(([id, status]) => [id, projectConnectionStatus(status)]),
+    Object.entries(connections || {}).map(([id, status]) => [
+      id,
+      projectConnectionStatus(status, now, windowEndAt),
+    ]),
   );
 }
 
@@ -30,12 +46,13 @@ function hasEligibleConnection(connections, allowedConnectionIds = null) {
   ));
 }
 
-function baseResponse(snapshot, connections) {
+function baseResponse(snapshot, connections, window) {
+  const enabled = snapshot?.enabled === true;
   return {
-    enabled: snapshot?.enabled === true,
-    currentlyActive: snapshot?.currentlyActive === true,
-    windowStartAt: typeof snapshot?.windowStartAt === "string" ? snapshot.windowStartAt : null,
-    windowEndAt: typeof snapshot?.windowEndAt === "string" ? snapshot.windowEndAt : null,
+    enabled,
+    currentlyActive: enabled && window.active,
+    windowStartAt: window.startAt,
+    windowEndAt: window.endAt,
     lastCompletedAt: typeof snapshot?.lastCompletedAt === "string" ? snapshot.lastCompletedAt : null,
     connections,
   };
@@ -45,14 +62,16 @@ function baseResponse(snapshot, connections) {
 export async function GET(request) {
   try {
     const snapshot = getClaudeWeekendRoutingSnapshot();
-    const connections = projectConnections(snapshot?.connections);
-    const response = baseResponse(snapshot, connections);
+    const now = new Date();
+    const window = getClaudeWeekendWindow(now);
+    const connections = projectConnections(snapshot?.connections, now, window.endAt);
+    const response = baseResponse(snapshot, connections, window);
     const apiKeyId = new URL(request.url).searchParams.get("apiKeyId");
 
     if (apiKeyId === null) {
       return NextResponse.json({
         ...response,
-        hasEligibleConnections: hasEligibleConnection(connections),
+        hasEligibleConnections: response.currentlyActive && hasEligibleConnection(connections),
       });
     }
 
@@ -74,15 +93,16 @@ export async function GET(request) {
       baseAllowedConnectionIds,
       globalConnections: safeConnections,
       snapshot,
-      enabled: snapshot?.enabled === true,
-      now: new Date(),
+      enabled: response.enabled,
+      now,
       maxAgeMs: CLAUDE_WEEKEND_ROUTING_CONFIG.maxObservationAgeMs,
     });
 
     return NextResponse.json({
       ...response,
       mode: resolved.mode,
-      hasEligibleConnections: hasEligibleConnection(connections, resolved.allowedConnectionIds),
+      hasEligibleConnections: response.currentlyActive
+        && hasEligibleConnection(connections, resolved.allowedConnectionIds),
     });
   } catch (error) {
     console.warn("[ClaudeWeekendRouting] status failed:", error.message);

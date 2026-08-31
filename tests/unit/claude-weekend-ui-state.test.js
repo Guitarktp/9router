@@ -8,6 +8,7 @@ import {
   projectClaudeWeekendStatus,
   selectClaudeWeekendStatus,
   settleClaudeWeekendStatus,
+  shouldShowClaudeWeekendModeNotice,
 } from "@/app/(dashboard)/dashboard/providers/[id]/claudeWeekendStatusUi.js";
 
 describe("Claude weekend routing UI state", () => {
@@ -37,6 +38,15 @@ describe("Claude weekend routing UI state", () => {
 
   it("keeps connection management visible with a quota-unavailable status copy", () => {
     expect(getClaudeWeekendModeCopy({ unavailable: true })).toBe("Quota unavailable");
+  });
+
+  it.each([
+    [false, { enabled: false, currentlyActive: false }, true],
+    [false, { enabled: true, currentlyActive: false }, true],
+    [false, { enabled: true, currentlyActive: true }, false],
+    [true, { enabled: true, currentlyActive: true, mode: "filtered" }, true],
+  ])("shows the inactive notice in the Global view when the overlay is inactive", (isKeyView, status, expected) => {
+    expect(shouldShowClaudeWeekendModeNotice(status, isKeyView)).toBe(expected);
   });
 
   it("projects only safe connection status fields", () => {

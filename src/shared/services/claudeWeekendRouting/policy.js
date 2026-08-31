@@ -56,7 +56,7 @@ export function resolveClaudeWeekendRouting(input) {
     : new Set([...original].filter((id) => globalIds.has(id)));
   const filtered = new Set([...baseIds].filter((id) => {
     const observation = input.snapshot?.connections?.[id];
-    return evaluateClaudeWeeklyQuota({
+    return observation?.eligible === true && evaluateClaudeWeeklyQuota({
       quota: observation,
       observedAt: observation?.observedAt,
       now: input.now,

@@ -72,6 +72,15 @@ describe("Claude weekend scheduler-safe logging boundaries", () => {
     expect(error.mock.calls.flat().join(" ")).toContain(RAW_ERROR);
   });
 
+  it("keeps proxy-resolution fallback safe when options is explicitly null", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { resolveConnectionProxyConfig } = await import("../../src/lib/network/connectionProxy.js");
+
+    await expect(resolveConnectionProxyConfig({ proxyPoolId: "pool-with-sensitive-data" }, null))
+      .resolves.toMatchObject({ source: "error", connectionProxyEnabled: false });
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+
   it("uses a silent executor logger only when credential refresh is scheduler-safe", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const refreshCredentials = vi.fn(async (_credentials, logger) => {

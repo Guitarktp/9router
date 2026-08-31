@@ -43,6 +43,21 @@ describe("Claude weekend routing policy", () => {
     expect(result.allowedConnectionIds).toBe(base);
     expect(result.mode).toBe("fallback");
   });
+  it("never promotes a scheduler-known ineligible observation", () => {
+    const base = new Set(["c1"]);
+    const result = resolveClaudeWeekendRouting({
+      providerId: "claude",
+      baseAllowedConnectionIds: base,
+      globalConnections: [{ id: "c1" }],
+      snapshot: freshSnapshot({
+        c1: { eligible: false, reason: "quota_unavailable", remaining: 42, resetAt, observedAt },
+      }),
+      enabled: true,
+      now,
+      maxAgeMs: 900000,
+    });
+    expect(result).toEqual({ allowedConnectionIds: base, mode: "fallback" });
+  });
   it.each([
     ["disabled", { enabled: false, providerId: "claude" }],
     ["outside window", { enabled: true, providerId: "claude", now: new Date("2026-08-31T00:00:00.000Z") }],

@@ -167,7 +167,7 @@ export async function resolveConnectionProxyConfig(
       ...legacy,
     };
   } catch (error) {
-    if (options.safeLogging !== true) {
+    if (options?.safeLogging !== true) {
       console.error(
         "[resolveConnectionProxyConfig] Failed to resolve proxy config:",
         error

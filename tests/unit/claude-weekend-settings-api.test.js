@@ -45,6 +45,9 @@ vi.mock("bcryptjs", () => ({ default: {} }));
 
 vi.mock("@/shared/services/claudeWeekendRouting/service.js", () => ({
   configureClaudeWeekendRouting: mocks.configureClaudeWeekendRouting,
+}));
+
+vi.mock("@/shared/services/claudeWeekendRouting/state.js", () => ({
   getClaudeWeekendRoutingSnapshot: mocks.getSnapshot,
 }));
 
@@ -179,6 +182,26 @@ describe("Claude weekend routing settings and status API", () => {
     expect(JSON.stringify(body)).not.toMatch(/accessToken|refreshToken|apiKey|proxy|name/i);
   });
 
+  it("marks an eligible Global snapshot stale at status-request time", async () => {
+    const { GET } = await import("@/app/api/providers/claude/weekend-routing/route.js");
+    mocks.getSnapshot.mockReturnValue({
+      ...SNAPSHOT,
+      connections: Object.freeze({
+        c1: Object.freeze({
+          ...SNAPSHOT.connections.c1,
+          observedAt: "2026-08-29T04:44:59.999Z",
+        }),
+      }),
+    });
+
+    const response = await GET(new Request("http://localhost/api/providers/claude/weekend-routing"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.connections.c1).toMatchObject({ eligible: false, reason: "stale" });
+    expect(body.hasEligibleConnections).toBe(false);
+  });
+
   it("returns filtered mode for an API key with eligible selected Claude connections", async () => {
     const { GET } = await import("@/app/api/providers/claude/weekend-routing/route.js");
     mocks.getApiKeys.mockResolvedValue([{
@@ -226,6 +249,33 @@ describe("Claude weekend routing settings and status API", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    expect(body.mode).toBe("fallback");
+    expect(body.hasEligibleConnections).toBe(false);
+  });
+
+  it("uses reset-elapsed status for an expired eligible API-key snapshot", async () => {
+    const { GET } = await import("@/app/api/providers/claude/weekend-routing/route.js");
+    mocks.getApiKeys.mockResolvedValue([{
+      id: "key-expired",
+      activeConnections: { claude: ["c1"] },
+    }]);
+    mocks.getSnapshot.mockReturnValue({
+      ...SNAPSHOT,
+      connections: Object.freeze({
+        c1: Object.freeze({
+          ...SNAPSHOT.connections.c1,
+          resetAt: "2026-08-29T04:59:59.999Z",
+        }),
+      }),
+    });
+
+    const response = await GET(new Request(
+      "http://localhost/api/providers/claude/weekend-routing?apiKeyId=key-expired",
+    ));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.connections.c1).toMatchObject({ eligible: false, reason: "reset_elapsed" });
     expect(body.mode).toBe("fallback");
     expect(body.hasEligibleConnections).toBe(false);
   });

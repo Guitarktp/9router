@@ -40,6 +40,7 @@ function createDefaultDeps() {
     refreshAndUpdateCredentials,
     resolveConnectionProxyConfig,
     getClaudeUsageObservation,
+    getCompletedAt: () => new Date(),
   };
 }
 
@@ -67,6 +68,7 @@ function logCompletion(startedAt, connections) {
     weekly_exhausted: 0,
     resets_after_window: 0,
     quota_unavailable: 0,
+    reset_elapsed: 0,
     stale: 0,
   };
   for (const result of Object.values(connections)) {
@@ -78,6 +80,7 @@ function logCompletion(startedAt, connections) {
     + ` weekly_exhausted=${counts.weekly_exhausted}`
     + ` resets_after_window=${counts.resets_after_window}`
     + ` quota_unavailable=${counts.quota_unavailable}`
+    + ` reset_elapsed=${counts.reset_elapsed}`
     + ` stale=${counts.stale}`,
   );
 }
@@ -139,11 +142,13 @@ export async function runClaudeWeekendRoutingTick(
       }
     }
 
+    const completedAt = deps.getCompletedAt?.() || new Date();
+    const completedMs = new Date(completedAt).getTime();
     const snapshot = createSnapshot({
       generation,
       enabled,
       window,
-      completedAt: currentTime.toISOString(),
+      completedAt: Number.isFinite(completedMs) ? new Date(completedMs).toISOString() : new Date().toISOString(),
       connections,
     });
     publishIfCurrent(state, generation, snapshot);

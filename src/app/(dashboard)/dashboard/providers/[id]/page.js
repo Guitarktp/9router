@@ -51,6 +51,7 @@ import {
   projectClaudeWeekendStatus,
   selectClaudeWeekendStatus,
   settleClaudeWeekendStatus,
+  shouldShowClaudeWeekendModeNotice,
 } from "./claudeWeekendStatusUi";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
@@ -1798,7 +1799,7 @@ export default function ProviderDetailPage() {
               <p>This provider is inactive for this API key. Its connection policy is visible but cannot take effect.</p>
             </div>
           )}
-          {providerId === "claude" && visibleWeekendStatus && (isKeyView || visibleWeekendStatus.unavailable) && (
+          {providerId === "claude" && shouldShowClaudeWeekendModeNotice(visibleWeekendStatus, isKeyView) && (
             <div className={`mb-4 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm ${visibleWeekendStatus.unavailable
               ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
               : "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300"}`}>

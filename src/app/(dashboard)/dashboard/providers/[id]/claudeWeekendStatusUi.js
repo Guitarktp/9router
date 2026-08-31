@@ -106,3 +106,7 @@ export function getClaudeWeekendModeCopy(status) {
       return "Weekend mode inactive";
   }
 }
+
+export function shouldShowClaudeWeekendModeNotice(status, isKeyView) {
+  return Boolean(status) && (isKeyView || status.unavailable === true || status.currentlyActive !== true);
+}

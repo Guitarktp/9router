@@ -132,6 +132,7 @@ describe("Claude weekend routing scheduler", () => {
       refreshAndUpdateCredentials: vi.fn(async (connection) => ({ connection, refreshed: false })),
       resolveConnectionProxyConfig: vi.fn().mockResolvedValue({}),
       getClaudeUsageObservation: vi.fn().mockResolvedValue(usageObservation()),
+      getCompletedAt: () => ACTIVE_NOW,
     };
     state = createState();
   });
@@ -182,6 +183,15 @@ describe("Claude weekend routing scheduler", () => {
         c2: { eligible: true, reason: "eligible", remaining: 42, resetAt: RESET_AT, observedAt: OBSERVED_AT },
       },
     });
+  });
+
+  it("records the actual completion instant through its deterministic clock seam", async () => {
+    const completedAt = new Date("2026-08-29T05:00:02.000Z");
+    deps.getCompletedAt = () => completedAt;
+
+    await service.runClaudeWeekendRoutingTick(deps, state, ACTIVE_NOW);
+
+    expect(state.snapshot.lastCompletedAt).toBe("2026-08-29T05:00:02.000Z");
   });
 
   it("defaults a missing setting to enabled", async () => {
@@ -307,7 +317,7 @@ describe("Claude weekend routing scheduler", () => {
       expect(warning.mock.calls.flat().join(" ")).not.toMatch(/raw|token-1|customer-name/);
       expect(completion).toHaveBeenCalledTimes(1);
       expect(completion.mock.calls[0].join(" ")).toMatch(
-        /^\[ClaudeWeekendRouting\] tick complete durationMs=\d+ eligible=0 weekly_exhausted=0 resets_after_window=0 quota_unavailable=0 stale=0$/,
+        /^\[ClaudeWeekendRouting\] tick complete durationMs=\d+ eligible=0 weekly_exhausted=0 resets_after_window=0 quota_unavailable=0 reset_elapsed=0 stale=0$/,
       );
     },
   );
@@ -329,6 +339,21 @@ describe("Claude weekend routing scheduler", () => {
       reason: "stale",
       observedAt: "2026-08-29T04:44:59.999Z",
     });
+  });
+
+  it("includes reset-elapsed observations in the fixed completion counters", async () => {
+    const completion = vi.spyOn(console, "log").mockImplementation(() => {});
+    deps.getProviderConnections.mockResolvedValue([
+      { id: "c1", provider: "claude", authType: "oauth", isActive: true, accessToken: "token-1" },
+    ]);
+    deps.getClaudeUsageObservation.mockResolvedValue(usageObservation({
+      resetAt: "2026-08-29T04:59:59.999Z",
+    }));
+
+    await service.runClaudeWeekendRoutingTick(deps, state, ACTIVE_NOW);
+
+    expect(state.snapshot.connections.c1).toMatchObject({ eligible: false, reason: "reset_elapsed" });
+    expect(completion.mock.calls.flat().join(" ")).toContain("reset_elapsed=1");
   });
 
   it("passes the shared max age to every scheduler quota evaluation", async () => {

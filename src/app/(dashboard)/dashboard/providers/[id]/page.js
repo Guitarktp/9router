@@ -50,6 +50,7 @@ import {
   getClaudeWeekendModeCopy,
   projectClaudeWeekendStatus,
   selectClaudeWeekendStatus,
+  settleClaudeWeekendStatus,
 } from "./claudeWeekendStatusUi";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
@@ -559,10 +560,9 @@ export default function ProviderDetailPage() {
 
     let intervalId = null;
     let controller = null;
-    let request = null;
     const loadWeekendStatus = async () => {
       controller?.abort();
-      request = weekendStatusLifecycleRef.current.begin(weekendStatusContextKey);
+      const request = weekendStatusLifecycleRef.current.begin(weekendStatusContextKey);
       setActiveWeekendStatusRequestId(request.id);
       controller = new AbortController();
       const suffix = isKeyView ? `?apiKeyId=${encodeURIComponent(selectedView)}` : "";
@@ -573,13 +573,20 @@ export default function ProviderDetailPage() {
         });
         if (!response.ok) throw new Error("Unable to load Claude weekend routing status");
         const status = projectClaudeWeekendStatus(await response.json());
-        if (weekendStatusLifecycleRef.current.canApply(request, request.contextKey)) {
-          setWeekendStatus({ ...status, contextKey: request.contextKey, requestId: request.id });
-        }
+        const settledStatus = settleClaudeWeekendStatus(
+          weekendStatusLifecycleRef.current,
+          request,
+          status,
+        );
+        if (settledStatus) setWeekendStatus(settledStatus);
       } catch (error) {
-        if (error.name !== "AbortError"
-          && weekendStatusLifecycleRef.current.canApply(request, request.contextKey)) {
-          setWeekendStatus(createUnavailableClaudeWeekendStatus(request.contextKey, request.id));
+        if (error.name !== "AbortError") {
+          const unavailableStatus = settleClaudeWeekendStatus(
+            weekendStatusLifecycleRef.current,
+            request,
+            createUnavailableClaudeWeekendStatus(),
+          );
+          if (unavailableStatus) setWeekendStatus(unavailableStatus);
         }
       }
     };
@@ -592,10 +599,8 @@ export default function ProviderDetailPage() {
       if (intervalId) window.clearInterval(intervalId);
       intervalId = null;
       controller?.abort();
-      weekendStatusLifecycleRef.current.invalidate(request);
-      setActiveWeekendStatusRequestId((currentRequestId) => (
-        currentRequestId === request?.id ? null : currentRequestId
-      ));
+      weekendStatusLifecycleRef.current.invalidate();
+      setActiveWeekendStatusRequestId(null);
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") startPolling();

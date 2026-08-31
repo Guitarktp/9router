@@ -33,19 +33,16 @@ export function createClaudeWeekendStatusLifecycle() {
         && activeRequest === request
         && request.contextKey === currentContextKey;
     },
-    isContextActive(contextKey) {
-      return activeRequest?.active === true && activeRequest.contextKey === contextKey;
-    },
-    isStatusCurrent(status) {
-      return activeRequest?.active === true
-        && activeRequest.contextKey === status?.contextKey
-        && activeRequest.id === status?.requestId;
-    },
   };
 }
 
 export function createUnavailableClaudeWeekendStatus(contextKey, requestId) {
   return { contextKey, requestId, unavailable: true, connections: {} };
+}
+
+export function settleClaudeWeekendStatus(lifecycle, request, status) {
+  if (!lifecycle.canApply(request, request?.contextKey)) return null;
+  return { ...status, contextKey: request.contextKey, requestId: request.id };
 }
 
 export function selectClaudeWeekendStatus(status, contextKey, contextIsActive = true) {

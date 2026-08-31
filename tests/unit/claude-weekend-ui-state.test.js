@@ -7,6 +7,7 @@ import {
   getClaudeWeekendModeCopy,
   projectClaudeWeekendStatus,
   selectClaudeWeekendStatus,
+  settleClaudeWeekendStatus,
 } from "@/app/(dashboard)/dashboard/providers/[id]/claudeWeekendStatusUi.js";
 
 describe("Claude weekend routing UI state", () => {
@@ -96,25 +97,43 @@ describe("Claude weekend routing UI state", () => {
     expect(selectClaudeWeekendStatus(statusA, createClaudeWeekendStatusRequestContext("codex", "key-a"))).toBeNull();
   });
 
-  it("ignores late A successes and failures after B becomes the active request", () => {
-    const lifecycle = createClaudeWeekendStatusLifecycle();
-    const contextA = createClaudeWeekendStatusRequestContext("claude", "key-a");
-    const contextB = createClaudeWeekendStatusRequestContext("claude", "key-b");
-    const requestA = lifecycle.begin(contextA);
-    const requestB = lifecycle.begin(contextB);
-
-    expect(lifecycle.canApply(requestA, contextB)).toBe(false);
-    expect(lifecycle.canApply(requestB, contextB)).toBe(true);
-  });
-
-  it("allows the current failure to become the quota-unavailable status", () => {
+  it("rejects late same-context A settlements and accepts the current B success", () => {
     const lifecycle = createClaudeWeekendStatusLifecycle();
     const context = createClaudeWeekendStatusRequestContext("claude", "key-a");
-    const request = lifecycle.begin(context);
-    const unavailable = createUnavailableClaudeWeekendStatus(context);
+    const requestA = lifecycle.begin(context);
+    const requestB = lifecycle.begin(context);
 
-    expect(lifecycle.canApply(request, context)).toBe(true);
-    expect(selectClaudeWeekendStatus(unavailable, context)).toEqual(unavailable);
+    expect(settleClaudeWeekendStatus(lifecycle, requestA, { mode: "filtered", connections: {} })).toBeNull();
+    expect(settleClaudeWeekendStatus(
+      lifecycle,
+      requestA,
+      createUnavailableClaudeWeekendStatus(),
+    )).toBeNull();
+    expect(settleClaudeWeekendStatus(lifecycle, requestB, { mode: "filtered", connections: {} })).toEqual({
+      contextKey: context,
+      requestId: requestB.id,
+      mode: "filtered",
+      connections: {},
+    });
+  });
+
+  it("settles the current B failure as quota unavailable with B's real request ID", () => {
+    const lifecycle = createClaudeWeekendStatusLifecycle();
+    const context = createClaudeWeekendStatusRequestContext("claude", "key-a");
+    lifecycle.begin(context);
+    const requestB = lifecycle.begin(context);
+    const unavailable = settleClaudeWeekendStatus(
+      lifecycle,
+      requestB,
+      createUnavailableClaudeWeekendStatus(),
+    );
+
+    expect(unavailable).toEqual({
+      contextKey: context,
+      requestId: requestB.id,
+      unavailable: true,
+      connections: {},
+    });
     expect(getClaudeWeekendModeCopy(unavailable)).toBe("Quota unavailable");
   });
 
@@ -125,7 +144,7 @@ describe("Claude weekend routing UI state", () => {
 
     lifecycle.invalidate(request);
 
-    expect(lifecycle.canApply(request, context)).toBe(false);
+    expect(settleClaudeWeekendStatus(lifecycle, request, { connections: {} })).toBeNull();
   });
 
   it("does not reuse an older status when Claude is revisited with the same key", () => {
@@ -135,8 +154,12 @@ describe("Claude weekend routing UI state", () => {
     const oldStatus = { contextKey: context, requestId: firstRequest.id, connections: {} };
 
     lifecycle.invalidate(firstRequest);
-    lifecycle.begin(context);
+    const currentRequest = lifecycle.begin(context);
 
-    expect(selectClaudeWeekendStatus(oldStatus, context, lifecycle.isStatusCurrent(oldStatus))).toBeNull();
+    expect(selectClaudeWeekendStatus(
+      oldStatus,
+      context,
+      oldStatus.requestId === currentRequest.id,
+    )).toBeNull();
   });
 });

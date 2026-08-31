@@ -209,4 +209,13 @@ describe("Claude weekend routing settings and status API", () => {
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "Key not found" });
   });
+
+  it("returns 404 when an empty API key ID is supplied", async () => {
+    const { GET } = await import("@/app/api/providers/claude/weekend-routing/route.js");
+
+    const response = await GET(new Request("http://localhost/api/providers/claude/weekend-routing?apiKeyId="));
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Key not found" });
+  });
 });

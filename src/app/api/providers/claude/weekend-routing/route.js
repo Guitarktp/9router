@@ -49,7 +49,7 @@ export async function GET(request) {
     const response = baseResponse(snapshot, connections);
     const apiKeyId = new URL(request.url).searchParams.get("apiKeyId");
 
-    if (!apiKeyId) {
+    if (apiKeyId === null) {
       return NextResponse.json({
         ...response,
         hasEligibleConnections: hasEligibleConnection(connections),

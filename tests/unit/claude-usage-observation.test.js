@@ -94,6 +94,33 @@ describe("Claude usage observations", () => {
     expect(stale.result.quotas["weekly (7d)"].remaining).toBe(80);
   });
 
+  it("keeps a forced refresh when an older expired refresh later fails", async () => {
+    proxyAwareFetch.mockResolvedValueOnce(successfulUsageResponse());
+    await getClaudeUsageObservation("test-token");
+    vi.setSystemTime(new Date("2026-01-01T12:05:01.000Z"));
+
+    const olderResponse = deferred();
+    proxyAwareFetch
+      .mockReturnValueOnce(olderResponse.promise)
+      .mockResolvedValueOnce(successfulUsageResponse(35))
+      .mockResolvedValueOnce({ ok: false, status: 403 });
+
+    const olderRefresh = getClaudeUsageObservation("test-token");
+    const forcedRefresh = getClaudeUsageObservation("test-token", null, { force: true });
+    const fresh = await forcedRefresh;
+
+    expect(fresh).toMatchObject({ source: "upstream", stale: false });
+    expect(fresh.result.quotas["weekly (7d)"].remaining).toBe(65);
+
+    olderResponse.resolve({ ok: false, status: 500 });
+    await olderRefresh;
+
+    const cached = await getClaudeUsageObservation("test-token");
+
+    expect(cached).toMatchObject({ source: "cache", stale: false });
+    expect(cached.result.quotas["weekly (7d)"].remaining).toBe(65);
+  });
+
   it("shares one upstream request between concurrent observations", async () => {
     const response = deferred();
     proxyAwareFetch.mockReturnValueOnce(response.promise);

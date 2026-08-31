@@ -45,10 +45,12 @@ export async function getClaudeUsageObservation(accessToken, proxyOptions = null
 
   const promise = (async () => {
     const result = await fetchClaudeUsageRaw(accessToken, proxyOptions);
+    const ownsCache = () => accessToken && usageCache.get(accessToken)?.promise === promise;
+
     // Only record a fresh observation for real quota data, not soft failures.
     if (result?.quotas) {
       const observedAt = new Date().toISOString();
-      if (accessToken) {
+      if (ownsCache()) {
         usageCache.set(accessToken, {
           result,
           observedAt,
@@ -59,7 +61,7 @@ export async function getClaudeUsageObservation(accessToken, proxyOptions = null
     }
     // Soft failure (429/error): prefer the last good read with its original time.
     if (staleEntry) {
-      if (accessToken) {
+      if (ownsCache()) {
         usageCache.set(accessToken, {
           ...staleEntry,
           stale: true,

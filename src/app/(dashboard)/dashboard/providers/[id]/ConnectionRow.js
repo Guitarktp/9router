@@ -5,6 +5,7 @@ import { getStatusVariant as getConnectionStatusVariant } from "@/shared/utils/c
 import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
+import { getClaudeWeekendBadge } from "./claudeWeekendStatusUi";
 
 export default function ConnectionRow({
   connection,
@@ -23,6 +24,7 @@ export default function ConnectionRow({
   onDelete,
   oneByOneStatus = null,
   autoPing = null,
+  weekendStatus = null,
 }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
@@ -159,6 +161,12 @@ export default function ConnectionRow({
     if (oneByOneStatus.state === "failed") return oneByOneStatus.error ? `failed: ${oneByOneStatus.error}` : "failed";
     return null;
   };
+  const weekendBadge = weekendStatus ? getClaudeWeekendBadge(weekendStatus) : null;
+  const weekendBadgeVariant = weekendBadge?.tone === "danger"
+    ? "error"
+    : weekendBadge?.tone === "muted"
+      ? "default"
+      : weekendBadge?.tone;
 
   return (
     <div className={`group flex min-w-0 flex-col gap-3 rounded-lg p-2 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02] sm:flex-row sm:items-center sm:justify-between ${connection.isActive === false ? "opacity-60" : ""}`}>
@@ -197,6 +205,11 @@ export default function ConnectionRow({
                   ? "disabled"
                   : (effectiveStatus || "Unknown")}
             </Badge>
+            {weekendBadge && (
+              <Badge variant={weekendBadgeVariant} size="sm">
+                {weekendBadge.label}
+              </Badge>
+            )}
             <Badge variant="default" size="sm">
               {authLabel}
             </Badge>
@@ -362,5 +375,12 @@ ConnectionRow.propTypes = {
     on: PropTypes.bool,
     onToggle: PropTypes.func,
     provider: PropTypes.string,
+  }),
+  weekendStatus: PropTypes.shape({
+    eligible: PropTypes.bool,
+    reason: PropTypes.string,
+    remaining: PropTypes.number,
+    resetAt: PropTypes.string,
+    observedAt: PropTypes.string,
   }),
 };

@@ -9,6 +9,7 @@ import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
 import { LOCALE_COOKIE, normalizeLocale } from "@/i18n/config";
 import { LOCALE_FLAGS } from "@/shared/constants/locales";
+import ClaudeWeekendRoutingSettings from "./ClaudeWeekendRoutingSettings";
 
 function getLocaleFromCookie() {
   if (typeof document === "undefined") return "en";
@@ -1508,6 +1509,12 @@ export default function ProfilePage() {
                 />
               </div>
             )}
+
+            <ClaudeWeekendRoutingSettings
+              settings={settings}
+              loading={loading}
+              onSaved={(saved) => setSettings((current) => ({ ...current, ...saved }))}
+            />
 
             <p className="text-xs text-text-muted italic pt-2 border-t border-border/50">
               {settings.fallbackStrategy === "round-robin"

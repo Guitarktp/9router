@@ -43,6 +43,10 @@ import {
   loadProviderDetailKeyContext,
   resolveProviderDetailView,
 } from "./providerDetailKeyContext";
+import {
+  getClaudeWeekendModeCopy,
+  projectClaudeWeekendStatus,
+} from "./claudeWeekendStatusUi";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
 
@@ -103,6 +107,7 @@ export default function ProviderDetailPage() {
   const [providerStickyLimit, setProviderStickyLimit] = useState("");
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [autoPing, setAutoPing] = useState({ enabled: false, connections: {} });
+  const [weekendStatus, setWeekendStatus] = useState(null);
   const [suggestedModels, setSuggestedModels] = useState([]);
   const [liveModels, setLiveModels] = useState([]);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
@@ -527,6 +532,55 @@ export default function ProviderDetailPage() {
     : [];
   const providerActiveForKey = selectedApiKey?.activeProviders === null
     || selectedApiKey?.activeProviders?.includes(providerId);
+
+  useEffect(() => {
+    if (providerId !== "claude") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setWeekendStatus(null);
+      return undefined;
+    }
+
+    let intervalId = null;
+    let controller = null;
+    const loadWeekendStatus = async () => {
+      controller?.abort();
+      controller = new AbortController();
+      const suffix = isKeyView ? `?apiKeyId=${encodeURIComponent(selectedView)}` : "";
+      try {
+        const response = await fetch(`/api/providers/claude/weekend-routing${suffix}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Unable to load Claude weekend routing status");
+        setWeekendStatus(projectClaudeWeekendStatus(await response.json()));
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          setWeekendStatus({ unavailable: true, connections: {} });
+        }
+      }
+    };
+    const startPolling = () => {
+      if (document.visibilityState !== "visible" || intervalId) return;
+      void loadWeekendStatus();
+      intervalId = window.setInterval(() => void loadWeekendStatus(), 60_000);
+    };
+    const stopPolling = () => {
+      if (intervalId) window.clearInterval(intervalId);
+      intervalId = null;
+      controller?.abort();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") startPolling();
+      else stopPolling();
+    };
+
+    startPolling();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [providerId, isKeyView, selectedView]);
 
   const handleSelectedViewChange = (nextView) => {
     setSelectedView(nextView);
@@ -1145,6 +1199,7 @@ export default function ProviderDetailPage() {
                 }}
                 onDelete={() => handleDelete(conn.id)}
                 oneByOneStatus={isKeyView ? null : oneByOneResults[conn.id] || null}
+                weekendStatus={providerId === "claude" ? weekendStatus?.connections?.[conn.id] || null : null}
               />
             </div>
           </div>
@@ -1708,6 +1763,16 @@ export default function ProviderDetailPage() {
             <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
               <span className="material-symbols-outlined shrink-0 text-lg">warning</span>
               <p>This provider is inactive for this API key. Its connection policy is visible but cannot take effect.</p>
+            </div>
+          )}
+          {providerId === "claude" && weekendStatus && (isKeyView || weekendStatus.unavailable) && (
+            <div className={`mb-4 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm ${weekendStatus.unavailable
+              ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
+              : "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300"}`}>
+              <span className="material-symbols-outlined shrink-0 text-lg">
+                {weekendStatus.unavailable ? "error" : "route"}
+              </span>
+              <p>{getClaudeWeekendModeCopy(weekendStatus)}</p>
             </div>
           )}
           {selectedApiKey && shouldShowConnectionRecovery({

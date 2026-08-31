@@ -48,6 +48,14 @@ vi.mock("@/shared/services/claudeWeekendRouting/service.js", () => ({
   getClaudeWeekendRoutingSnapshot: mocks.getSnapshot,
 }));
 
+vi.mock("@/shared/services/claudeWeekendRouting/policy.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    resolveClaudeWeekendRouting: vi.fn(actual.resolveClaudeWeekendRouting),
+  };
+});
+
 const ACTIVE_NOW = new Date("2026-08-29T05:00:00.000Z");
 const SNAPSHOT = Object.freeze({
   generation: 99,
@@ -184,6 +192,27 @@ describe("Claude weekend routing settings and status API", () => {
     expect(response.status).toBe(200);
     expect(body.mode).toBe("filtered");
     expect(body.hasEligibleConnections).toBe(true);
+  });
+
+  it("passes the shared max age to the per-key status resolver", async () => {
+    const { GET } = await import("@/app/api/providers/claude/weekend-routing/route.js");
+    const [policy, constants] = await Promise.all([
+      import("@/shared/services/claudeWeekendRouting/policy.js"),
+      import("@/shared/services/claudeWeekendRouting/constants.js"),
+    ]);
+    mocks.getApiKeys.mockResolvedValue([{
+      id: "key-max-age",
+      activeConnections: { claude: ["c1"] },
+    }]);
+
+    const response = await GET(new Request(
+      "http://localhost/api/providers/claude/weekend-routing?apiKeyId=key-max-age",
+    ));
+
+    expect(response.status).toBe(200);
+    expect(policy.resolveClaudeWeekendRouting).toHaveBeenCalledWith(expect.objectContaining({
+      maxAgeMs: constants.CLAUDE_WEEKEND_MAX_OBSERVATION_AGE_MS,
+    }));
   });
 
   it("returns fallback mode for an API key whose selected Claude connections have no eligibility", async () => {

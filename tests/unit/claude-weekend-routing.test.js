@@ -76,6 +76,13 @@ async function getWeekendResolver() {
   return resolveClaudeWeekendRouting;
 }
 
+async function getSharedMaxObservationAge() {
+  const { CLAUDE_WEEKEND_MAX_OBSERVATION_AGE_MS } = await import(
+    "@/shared/services/claudeWeekendRouting/constants.js"
+  );
+  return CLAUDE_WEEKEND_MAX_OBSERVATION_AGE_MS;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
@@ -102,8 +109,15 @@ describe("Claude weekend credential routing", () => {
     const result = await getCredentials("claude", null, "claude-sonnet", {
       allowedConnectionIds: new Set(["c1", "c2"]),
     });
+    const [resolveWeekendRouting, sharedMaxObservationAge] = await Promise.all([
+      getWeekendResolver(),
+      getSharedMaxObservationAge(),
+    ]);
 
     expect(result.connectionId).toBe("c2");
+    expect(resolveWeekendRouting).toHaveBeenCalledWith(expect.objectContaining({
+      maxAgeMs: sharedMaxObservationAge,
+    }));
   });
 
   it("falls back to a restricted key base set when its eligible intersection is empty", async () => {

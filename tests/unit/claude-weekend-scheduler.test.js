@@ -19,6 +19,14 @@ vi.mock("open-sse/services/usage/claude.js", () => ({
   getClaudeUsageObservation: vi.fn(),
 }));
 
+vi.mock("@/shared/services/claudeWeekendRouting/policy.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    evaluateClaudeWeeklyQuota: vi.fn(actual.evaluateClaudeWeeklyQuota),
+  };
+});
+
 const ACTIVE_NOW = new Date("2026-08-29T05:00:00.000Z");
 const OUTSIDE_NOW = new Date("2026-08-31T00:00:00.000Z");
 const OBSERVED_AT = "2026-08-29T04:55:00.000Z";
@@ -321,6 +329,18 @@ describe("Claude weekend routing scheduler", () => {
       reason: "stale",
       observedAt: "2026-08-29T04:44:59.999Z",
     });
+  });
+
+  it("passes the shared max age to every scheduler quota evaluation", async () => {
+    await service.runClaudeWeekendRoutingTick(deps, state, ACTIVE_NOW);
+    const [policy, constants] = await Promise.all([
+      import("../../src/shared/services/claudeWeekendRouting/policy.js"),
+      import("../../src/shared/services/claudeWeekendRouting/constants.js"),
+    ]);
+
+    expect(policy.evaluateClaudeWeeklyQuota).toHaveBeenCalledWith(expect.objectContaining({
+      maxAgeMs: constants.CLAUDE_WEEKEND_MAX_OBSERVATION_AGE_MS,
+    }));
   });
 
   it("keeps the previous snapshot visible until the complete deeply frozen replacement is ready", async () => {

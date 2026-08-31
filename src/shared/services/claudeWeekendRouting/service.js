@@ -6,25 +6,15 @@ import { refreshAndUpdateCredentials } from "@/app/api/usage/[connectionId]/rout
 import { CLAUDE_WEEKEND_ROUTING_CONFIG } from "@/shared/constants/config";
 import { getClaudeUsageObservation } from "open-sse/services/usage/claude.js";
 import { CLAUDE_WEEKEND_REASON, evaluateClaudeWeeklyQuota } from "./policy.js";
+import {
+  getClaudeWeekendRoutingSnapshot,
+  getClaudeWeekendRoutingState,
+} from "./state.js";
 import { getClaudeWeekendWindow } from "./window.js";
 
 const C = CLAUDE_WEEKEND_ROUTING_CONFIG;
 
-const g = (global.__claudeWeekendRouting ??= {
-  interval: null,
-  running: false,
-  rerunRequested: false,
-  generation: 0,
-  snapshot: Object.freeze({
-    generation: 0,
-    enabled: true,
-    currentlyActive: false,
-    lastCompletedAt: null,
-    windowStartAt: null,
-    windowEndAt: null,
-    connections: Object.freeze({}),
-  }),
-});
+const g = getClaudeWeekendRoutingState();
 
 function deepFreeze(value) {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
@@ -169,9 +159,7 @@ export async function runClaudeWeekendRoutingTick(
   }
 }
 
-export function getClaudeWeekendRoutingSnapshot() {
-  return g.snapshot;
-}
+export { getClaudeWeekendRoutingSnapshot };
 
 export function startClaudeWeekendRouting() {
   if (g.interval) return;

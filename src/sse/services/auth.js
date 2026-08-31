@@ -76,12 +76,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     let effectiveAllowedConnectionIds = allowedConnectionIds;
     if (providerId === "claude") {
       const [
-        { CLAUDE_WEEKEND_ROUTING_CONFIG },
         { getClaudeWeekendRoutingSnapshot },
-        { resolveClaudeWeekendRouting },
+        { CLAUDE_WEEKEND_MAX_OBSERVATION_AGE_MS, resolveClaudeWeekendRouting },
       ] = await Promise.all([
-        import("@/shared/constants/config"),
-        import("@/shared/services/claudeWeekendRouting/service.js"),
+        import("@/shared/services/claudeWeekendRouting/state.js"),
         import("@/shared/services/claudeWeekendRouting/policy.js"),
       ]);
       const snapshot = getClaudeWeekendRoutingSnapshot();
@@ -92,7 +90,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         snapshot,
         enabled: snapshot?.enabled === true,
         now: new Date(),
-        maxAgeMs: CLAUDE_WEEKEND_ROUTING_CONFIG.maxObservationAgeMs,
+        maxAgeMs: CLAUDE_WEEKEND_MAX_OBSERVATION_AGE_MS,
       }).allowedConnectionIds;
     }
     const connections = effectiveAllowedConnectionIds === null

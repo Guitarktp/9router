@@ -28,7 +28,7 @@ vi.mock("@/shared/constants/providers.js", async (importOriginal) => ({
   resolveProviderId: (providerId) => providerId,
 }));
 
-vi.mock("@/shared/services/claudeWeekendRouting/service.js", () => ({
+vi.mock("@/shared/services/claudeWeekendRouting/state.js", () => ({
   getClaudeWeekendRoutingSnapshot: mocks.getSnapshot,
 }));
 

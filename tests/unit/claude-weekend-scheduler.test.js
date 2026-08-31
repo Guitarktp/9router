@@ -459,4 +459,15 @@ describe("Claude weekend routing scheduler", () => {
     expect(service.getClaudeWeekendRoutingSnapshot().enabled).toBe(true);
     expect(defaultMocks.getSettings).toHaveBeenCalledTimes(1);
   });
+
+  it("re-exports the snapshot held by the shared routing state", async () => {
+    const { getClaudeWeekendRoutingSnapshot: getSharedSnapshot } = await import(
+      "../../src/shared/services/claudeWeekendRouting/state.js"
+    );
+    const sharedSnapshot = frozenSnapshot({ generation: 7 });
+    global.__claudeWeekendRouting.snapshot = sharedSnapshot;
+
+    expect(getSharedSnapshot()).toBe(sharedSnapshot);
+    expect(service.getClaudeWeekendRoutingSnapshot()).toBe(sharedSnapshot);
+  });
 });

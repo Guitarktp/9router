@@ -92,6 +92,13 @@ export const QUOTA_AUTOPING_CONFIG = {
   },
 };
 
+export const CLAUDE_WEEKEND_ROUTING_CONFIG = Object.freeze({
+  timezone: "Asia/Bangkok",
+  quotaKey: "weekly (7d)",
+  tickIntervalMs: 10 * 60 * 1000,
+  maxObservationAgeMs: 15 * 60 * 1000,
+});
+
 // Re-export from providers.js for backward compatibility
 export {
   FREE_PROVIDERS,

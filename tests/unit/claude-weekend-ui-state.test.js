@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  createClaudeWeekendStatusLifecycle,
+  createClaudeWeekendStatusRequestContext,
+  createUnavailableClaudeWeekendStatus,
   getClaudeWeekendBadge,
   getClaudeWeekendModeCopy,
   projectClaudeWeekendStatus,
+  selectClaudeWeekendStatus,
 } from "@/app/(dashboard)/dashboard/providers/[id]/claudeWeekendStatusUi.js";
 
 describe("Claude weekend routing UI state", () => {
@@ -70,5 +74,69 @@ describe("Claude weekend routing UI state", () => {
       },
     });
     expect(JSON.stringify(result)).not.toMatch(/accessToken|refreshToken|apiKey|clientSecret|secret-access-token/i);
+  });
+
+  it("hides an A status synchronously when the requested Claude key changes to B", () => {
+    const statusA = {
+      contextKey: createClaudeWeekendStatusRequestContext("claude", "key-a"),
+      mode: "filtered",
+      connections: {},
+    };
+    const contextB = createClaudeWeekendStatusRequestContext("claude", "key-b");
+
+    expect(selectClaudeWeekendStatus(statusA, contextB)).toBeNull();
+  });
+
+  it("does not reuse a Claude status after navigating to a non-Claude provider", () => {
+    const statusA = {
+      contextKey: createClaudeWeekendStatusRequestContext("claude", "key-a"),
+      connections: {},
+    };
+
+    expect(selectClaudeWeekendStatus(statusA, createClaudeWeekendStatusRequestContext("codex", "key-a"))).toBeNull();
+  });
+
+  it("ignores late A successes and failures after B becomes the active request", () => {
+    const lifecycle = createClaudeWeekendStatusLifecycle();
+    const contextA = createClaudeWeekendStatusRequestContext("claude", "key-a");
+    const contextB = createClaudeWeekendStatusRequestContext("claude", "key-b");
+    const requestA = lifecycle.begin(contextA);
+    const requestB = lifecycle.begin(contextB);
+
+    expect(lifecycle.canApply(requestA, contextB)).toBe(false);
+    expect(lifecycle.canApply(requestB, contextB)).toBe(true);
+  });
+
+  it("allows the current failure to become the quota-unavailable status", () => {
+    const lifecycle = createClaudeWeekendStatusLifecycle();
+    const context = createClaudeWeekendStatusRequestContext("claude", "key-a");
+    const request = lifecycle.begin(context);
+    const unavailable = createUnavailableClaudeWeekendStatus(context);
+
+    expect(lifecycle.canApply(request, context)).toBe(true);
+    expect(selectClaudeWeekendStatus(unavailable, context)).toEqual(unavailable);
+    expect(getClaudeWeekendModeCopy(unavailable)).toBe("Quota unavailable");
+  });
+
+  it("invalidates a request during cleanup, including visibility polling cleanup", () => {
+    const lifecycle = createClaudeWeekendStatusLifecycle();
+    const context = createClaudeWeekendStatusRequestContext("claude", "key-a");
+    const request = lifecycle.begin(context);
+
+    lifecycle.invalidate(request);
+
+    expect(lifecycle.canApply(request, context)).toBe(false);
+  });
+
+  it("does not reuse an older status when Claude is revisited with the same key", () => {
+    const lifecycle = createClaudeWeekendStatusLifecycle();
+    const context = createClaudeWeekendStatusRequestContext("claude", "key-a");
+    const firstRequest = lifecycle.begin(context);
+    const oldStatus = { contextKey: context, requestId: firstRequest.id, connections: {} };
+
+    lifecycle.invalidate(firstRequest);
+    lifecycle.begin(context);
+
+    expect(selectClaudeWeekendStatus(oldStatus, context, lifecycle.isStatusCurrent(oldStatus))).toBeNull();
   });
 });

@@ -9,6 +9,49 @@ const CONNECTION_REASONS = new Set([
 
 const KEY_VIEW_MODES = new Set(["filtered", "fallback", "inactive"]);
 
+export function createClaudeWeekendStatusRequestContext(providerId, selectedView) {
+  return providerId === "claude" ? `claude:${selectedView || "global"}` : null;
+}
+
+export function createClaudeWeekendStatusLifecycle() {
+  let activeRequest = null;
+  let nextRequestId = 0;
+
+  return {
+    begin(contextKey) {
+      if (activeRequest) activeRequest.active = false;
+      activeRequest = { id: ++nextRequestId, contextKey, active: true };
+      return activeRequest;
+    },
+    invalidate(request = activeRequest) {
+      if (!request) return;
+      request.active = false;
+      if (activeRequest === request) activeRequest = null;
+    },
+    canApply(request, currentContextKey) {
+      return request?.active === true
+        && activeRequest === request
+        && request.contextKey === currentContextKey;
+    },
+    isContextActive(contextKey) {
+      return activeRequest?.active === true && activeRequest.contextKey === contextKey;
+    },
+    isStatusCurrent(status) {
+      return activeRequest?.active === true
+        && activeRequest.contextKey === status?.contextKey
+        && activeRequest.id === status?.requestId;
+    },
+  };
+}
+
+export function createUnavailableClaudeWeekendStatus(contextKey, requestId) {
+  return { contextKey, requestId, unavailable: true, connections: {} };
+}
+
+export function selectClaudeWeekendStatus(status, contextKey, contextIsActive = true) {
+  return contextKey && contextIsActive && status?.contextKey === contextKey ? status : null;
+}
+
 function projectConnectionStatus(status) {
   const result = {
     eligible: status?.eligible === true,

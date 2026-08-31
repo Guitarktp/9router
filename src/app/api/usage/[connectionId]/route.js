@@ -9,6 +9,14 @@ import { USAGE_APIKEY_PROVIDERS } from "@/shared/constants/providers";
 
 // Detect auth-expired messages returned by usage providers instead of throwing
 const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
+const SILENT_LOGGER = Object.freeze({
+  debug() {},
+  error() {},
+  info() {},
+  log() {},
+  warn() {},
+});
+
 function isAuthExpiredMessage(usage) {
   if (!usage?.message) return false;
   const msg = usage.message.toLowerCase();
@@ -45,7 +53,8 @@ export async function refreshAndUpdateCredentials(connection, force = false, pro
   }
 
   // Use executor's refreshCredentials method (with optional proxy)
-  const refreshResult = await executor.refreshCredentials(credentials, console, proxyOptions);
+  const logger = proxyOptions?.safeLogging === true ? SILENT_LOGGER : console;
+  const refreshResult = await executor.refreshCredentials(credentials, logger, proxyOptions);
 
   if (!refreshResult) {
     // Refresh failed but we still have an accessToken — try with existing token

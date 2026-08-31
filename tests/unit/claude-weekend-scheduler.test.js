@@ -145,6 +145,11 @@ describe("Claude weekend routing scheduler", () => {
 
     expect(deps.getProviderConnections).toHaveBeenCalledWith({ provider: "claude", isActive: true });
     expect(deps.refreshAndUpdateCredentials).toHaveBeenCalledTimes(2);
+    expect(deps.resolveConnectionProxyConfig).toHaveBeenNthCalledWith(
+      1,
+      undefined,
+      { safeLogging: true },
+    );
     expect(deps.getClaudeUsageObservation).toHaveBeenNthCalledWith(
       1,
       "token-1-refreshed",
@@ -154,6 +159,7 @@ describe("Claude weekend routing scheduler", () => {
         connectionNoProxy: "",
         vercelRelayUrl: "",
         strictProxy: false,
+        safeLogging: true,
       },
     );
     expect(state.snapshot).toMatchObject({
@@ -272,6 +278,32 @@ describe("Claude weekend routing scheduler", () => {
     expect(completionText).toContain("stale=0");
   });
 
+  it.each(["settings", "connections DB"])(
+    "emits one fixed completion line when the %s read fails",
+    async (failurePoint) => {
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const completion = vi.spyOn(console, "log").mockImplementation(() => {});
+      const oldSnapshot = state.snapshot;
+      if (failurePoint === "settings") {
+        deps.getSettings.mockRejectedValue(new Error("raw settings body token-1 customer-name"));
+      } else {
+        deps.getProviderConnections.mockRejectedValue(
+          new Error("raw DB body token-1 customer-name"),
+        );
+      }
+
+      await service.runClaudeWeekendRoutingTick(deps, state, ACTIVE_NOW);
+
+      expect(state.snapshot).toBe(oldSnapshot);
+      expect(warning).toHaveBeenCalledTimes(1);
+      expect(warning.mock.calls.flat().join(" ")).not.toMatch(/raw|token-1|customer-name/);
+      expect(completion).toHaveBeenCalledTimes(1);
+      expect(completion.mock.calls[0].join(" ")).toMatch(
+        /^\[ClaudeWeekendRouting\] tick complete durationMs=\d+ eligible=0 weekly_exhausted=0 resets_after_window=0 quota_unavailable=0 stale=0$/,
+      );
+    },
+  );
+
   it("marks observations older than fifteen minutes stale", async () => {
     deps.getProviderConnections.mockResolvedValue([
       { id: "c1", provider: "claude", authType: "oauth", isActive: true, accessToken: "token-1" },
@@ -345,6 +377,46 @@ describe("Claude weekend routing scheduler", () => {
     await olderTick;
 
     expect(state.snapshot).toBe(newerSnapshot);
+  });
+
+  it("coalesces configuration changes during a tick into one immediate rerun and stops obsolete work", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(ACTIVE_NOW);
+    const firstObservation = deferred();
+    const rerunSettings = deferred();
+    global.__claudeWeekendRouting.interval = { unref: vi.fn() };
+    defaultMocks.getSettings
+      .mockResolvedValueOnce({ claudeWeekendRouting: { enabled: true } })
+      .mockReturnValueOnce(rerunSettings.promise);
+    defaultMocks.getProviderConnections.mockResolvedValue([
+      { id: "c1", provider: "claude", authType: "oauth", isActive: true, accessToken: "token-1" },
+      { id: "c2", provider: "claude", authType: "oauth", isActive: true, accessToken: "token-2" },
+    ]);
+    defaultMocks.getClaudeUsageObservation
+      .mockReturnValueOnce(firstObservation.promise)
+      .mockResolvedValue(usageObservation());
+
+    const activeTick = service.runClaudeWeekendRoutingTick();
+    await vi.waitFor(() => expect(defaultMocks.getClaudeUsageObservation).toHaveBeenCalledTimes(1));
+
+    service.configureClaudeWeekendRouting({ claudeWeekendRouting: { enabled: true } });
+    service.configureClaudeWeekendRouting({ claudeWeekendRouting: { enabled: true } });
+    firstObservation.resolve(usageObservation());
+    await activeTick;
+
+    expect(defaultMocks.getClaudeUsageObservation.mock.calls.map(([token]) => token)).toEqual(["token-1"]);
+    expect(defaultMocks.getSettings).toHaveBeenCalledTimes(2);
+
+    rerunSettings.resolve({ claudeWeekendRouting: { enabled: true } });
+    await vi.waitFor(() => expect(defaultMocks.getClaudeUsageObservation).toHaveBeenCalledTimes(3));
+
+    expect(defaultMocks.getClaudeUsageObservation.mock.calls.map(([token]) => token)).toEqual([
+      "token-1",
+      "token-1",
+      "token-2",
+    ]);
+    expect(defaultMocks.getSettings).toHaveBeenCalledTimes(2);
+    expect(service.getClaudeWeekendRoutingSnapshot().connections).toHaveProperty("c2");
   });
 
   it("starts immediately, installs one unref'd ten-minute timer, and clears only that timer", () => {

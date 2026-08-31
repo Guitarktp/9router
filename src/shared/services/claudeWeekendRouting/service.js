@@ -13,6 +13,7 @@ const C = CLAUDE_WEEKEND_ROUTING_CONFIG;
 const g = (global.__claudeWeekendRouting ??= {
   interval: null,
   running: false,
+  rerunRequested: false,
   generation: 0,
   snapshot: Object.freeze({
     generation: 0,
@@ -38,6 +39,7 @@ function buildProxyOptions(config) {
     connectionNoProxy: config.connectionNoProxy || "",
     vercelRelayUrl: config.vercelRelayUrl || "",
     strictProxy: false,
+    safeLogging: true,
   };
 }
 
@@ -99,25 +101,34 @@ export async function runClaudeWeekendRoutingTick(
   state.running = true;
   const startedAt = Date.now();
   const generation = ++state.generation;
+  const connections = {};
 
   try {
     const currentTime = now instanceof Date ? now : new Date(now);
     const settings = await deps.getSettings();
+    if (state.generation !== generation) return;
     const enabled = settings?.claudeWeekendRouting?.enabled !== false;
     const window = getClaudeWeekendWindow(currentTime);
-    const connections = {};
 
     if (enabled && window.active) {
       const storedConnections = await deps.getProviderConnections({ provider: "claude", isActive: true });
+      if (state.generation !== generation) return;
       const targets = storedConnections.filter((connection) => connection.authType === "oauth");
 
       for (const storedConnection of targets) {
+        if (state.generation !== generation) break;
         try {
-          const proxyConfig = await deps.resolveConnectionProxyConfig(storedConnection.providerSpecificData);
+          const proxyConfig = await deps.resolveConnectionProxyConfig(
+            storedConnection.providerSpecificData,
+            { safeLogging: true },
+          );
+          if (state.generation !== generation) break;
           const proxyOptions = buildProxyOptions(proxyConfig);
           const refresh = await deps.refreshAndUpdateCredentials(storedConnection, false, proxyOptions);
+          if (state.generation !== generation) break;
           const connection = refresh.connection;
           const observation = await deps.getClaudeUsageObservation(connection.accessToken, proxyOptions);
+          if (state.generation !== generation) break;
           connections[storedConnection.id] = evaluateClaudeWeeklyQuota({
             quota: observation?.result?.quotas?.[C.quotaKey],
             observedAt: observation?.observedAt,
@@ -126,6 +137,7 @@ export async function runClaudeWeekendRoutingTick(
             maxAgeMs: C.maxObservationAgeMs,
           });
         } catch {
+          if (state.generation !== generation) break;
           connections[storedConnection.id] = {
             eligible: false,
             reason: CLAUDE_WEEKEND_REASON.QUOTA_UNAVAILABLE,
@@ -145,11 +157,15 @@ export async function runClaudeWeekendRoutingTick(
       connections,
     });
     publishIfCurrent(state, generation, snapshot);
-    logCompletion(startedAt, connections);
   } catch {
     console.warn("[ClaudeWeekendRouting] tick failed reason=quota_unavailable");
   } finally {
     state.running = false;
+    logCompletion(startedAt, connections);
+    if (state === g && state.rerunRequested) {
+      state.rerunRequested = false;
+      runClaudeWeekendRoutingTick().catch(() => {});
+    }
   }
 }
 
@@ -184,9 +200,15 @@ export function configureClaudeWeekendRouting(settings) {
   });
 
   if (!enabled) return;
-  if (g.interval) {
-    runClaudeWeekendRoutingTick().catch(() => {});
-  } else {
+  if (!g.interval) {
+    const wasRunning = g.running;
     startClaudeWeekendRouting();
+    if (wasRunning) g.rerunRequested = true;
+    return;
   }
+  if (g.running) {
+    g.rerunRequested = true;
+    return;
+  }
+  runClaudeWeekendRoutingTick().catch(() => {});
 }

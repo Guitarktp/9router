@@ -64,7 +64,8 @@ function normalizeLegacyProxy(providerSpecificData = {}) {
  * 3. No Proxy
  */
 export async function resolveConnectionProxyConfig(
-  providerSpecificData = {}
+  providerSpecificData = {},
+  options = {},
 ) {
   try {
     const proxyPoolIdRaw = normalizeString(
@@ -166,10 +167,12 @@ export async function resolveConnectionProxyConfig(
       ...legacy,
     };
   } catch (error) {
-    console.error(
-      "[resolveConnectionProxyConfig] Failed to resolve proxy config:",
-      error
-    );
+    if (options.safeLogging !== true) {
+      console.error(
+        "[resolveConnectionProxyConfig] Failed to resolve proxy config:",
+        error
+      );
+    }
 
     return {
       source: "error",

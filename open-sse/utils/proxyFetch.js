@@ -117,10 +117,14 @@ function normalizeString(value) {
   return String(value).trim();
 }
 
+function warnUnlessSafe(proxyOptions, ...args) {
+  if (proxyOptions?.safeLogging !== true) console.warn(...args);
+}
+
 /**
  * Resolve real IP using Google DNS (bypass system DNS)
  */
-async function resolveRealIP(hostname) {
+async function resolveRealIP(hostname, proxyOptions = null) {
   const cached = DNS_CACHE.get(hostname);
   if (cached && Date.now() < cached.expiry) return cached.ip;
 
@@ -134,7 +138,7 @@ async function resolveRealIP(hostname) {
     DNS_CACHE.set(hostname, { ip: addresses[0], expiry: Date.now() + MEMORY_CONFIG.dnsCacheTtlMs });
     return addresses[0];
   } catch (error) {
-    console.warn(`[ProxyFetch] DNS resolve failed for ${hostname}:`, error.message);
+    warnUnlessSafe(proxyOptions, `[ProxyFetch] DNS resolve failed for ${hostname}:`, error.message);
     return null;
   }
 }
@@ -321,16 +325,19 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
         if (proxyOptions?.strictProxy === true) {
           throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
         }
-        console.warn(`[ProxyFetch] Proxy failed, falling back to direct bypass: ${proxyError.message}`);
+        warnUnlessSafe(
+          proxyOptions,
+          `[ProxyFetch] Proxy failed, falling back to direct bypass: ${proxyError.message}`,
+        );
       }
     }
     // No proxy — manually resolve real IP to bypass DNS spoof
     try {
       const parsedUrl = new URL(targetUrl);
-      const realIP = await resolveRealIP(parsedUrl.hostname);
+      const realIP = await resolveRealIP(parsedUrl.hostname, proxyOptions);
       if (realIP) return await createBypassRequest(parsedUrl, realIP, options);
     } catch (error) {
-      console.warn(`[ProxyFetch] MITM bypass failed: ${error.message}`);
+      warnUnlessSafe(proxyOptions, `[ProxyFetch] MITM bypass failed: ${error.message}`);
     }
   }
 
@@ -343,7 +350,10 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       if (proxyOptions?.strictProxy === true) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
       }
-      console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
+      warnUnlessSafe(
+        proxyOptions,
+        `[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`,
+      );
       return originalFetch(url, options);
     }
   }

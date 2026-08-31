@@ -83,6 +83,10 @@ async function runHeavyStartup() {
   await cleanupProviderConnections();
   const settings = await getSettings();
 
+  import("@/shared/services/claudeWeekendRouting/service.js")
+    .then(({ configureClaudeWeekendRouting }) => configureClaudeWeekendRouting(settings))
+    .catch((error) => console.warn("[ClaudeWeekendRouting] startup configuration failed:", error.message));
+
   // Auto-resume tunnel (once per process)
   if (settings.tunnelEnabled && !g.tunnelAutoResumed) {
     g.tunnelAutoResumed = true;

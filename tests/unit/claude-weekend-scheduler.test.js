@@ -338,9 +338,10 @@ describe("Claude weekend routing scheduler", () => {
       import("../../src/shared/services/claudeWeekendRouting/constants.js"),
     ]);
 
-    expect(policy.evaluateClaudeWeeklyQuota).toHaveBeenCalledWith(expect.objectContaining({
-      maxAgeMs: constants.CLAUDE_WEEKEND_MAX_OBSERVATION_AGE_MS,
-    }));
+    expect(policy.evaluateClaudeWeeklyQuota).toHaveBeenCalledTimes(2);
+    for (const [input] of policy.evaluateClaudeWeeklyQuota.mock.calls) {
+      expect(input.maxAgeMs).toBe(constants.CLAUDE_WEEKEND_MAX_OBSERVATION_AGE_MS);
+    }
   });
 
   it("keeps the previous snapshot visible until the complete deeply frozen replacement is ready", async () => {

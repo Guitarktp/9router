@@ -73,9 +73,31 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       ? options.allowedConnectionIds
       : null;
     const globalConnections = await getProviderConnections({ provider: providerId, isActive: true });
-    const connections = allowedConnectionIds === null
+    let effectiveAllowedConnectionIds = allowedConnectionIds;
+    if (providerId === "claude") {
+      const [
+        { CLAUDE_WEEKEND_ROUTING_CONFIG },
+        { getClaudeWeekendRoutingSnapshot },
+        { resolveClaudeWeekendRouting },
+      ] = await Promise.all([
+        import("@/shared/constants/config"),
+        import("@/shared/services/claudeWeekendRouting/service.js"),
+        import("@/shared/services/claudeWeekendRouting/policy.js"),
+      ]);
+      const snapshot = getClaudeWeekendRoutingSnapshot();
+      effectiveAllowedConnectionIds = resolveClaudeWeekendRouting({
+        providerId,
+        baseAllowedConnectionIds: allowedConnectionIds,
+        globalConnections,
+        snapshot,
+        enabled: snapshot?.enabled === true,
+        now: new Date(),
+        maxAgeMs: CLAUDE_WEEKEND_ROUTING_CONFIG.maxObservationAgeMs,
+      }).allowedConnectionIds;
+    }
+    const connections = effectiveAllowedConnectionIds === null
       ? globalConnections
-      : globalConnections.filter((connection) => allowedConnectionIds.has(connection.id));
+      : globalConnections.filter((connection) => effectiveAllowedConnectionIds.has(connection.id));
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     if (connections.length === 0) {

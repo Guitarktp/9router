@@ -21,7 +21,8 @@ vi.mock("@/lib/network/connectionProxy", () => ({
   pickProxyPoolId: vi.fn(),
 }));
 
-vi.mock("@/shared/constants/providers.js", () => ({
+vi.mock("@/shared/constants/providers.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   FREE_PROVIDERS: { "no-auth": { noAuth: true } },
   resolveProviderId: (providerId) => providerId,
 }));
@@ -89,6 +90,16 @@ describe("API-key connection credential policy", () => {
     const result = await getProviderCredentials("claude", null, "opus");
 
     expect(result.connectionId).toBe("claude-1");
+  });
+
+  it("keeps an API-key connection policy authoritative when the weekend overlay is inactive", async () => {
+    const { getProviderCredentials } = await import("@/sse/services/auth.js");
+
+    const result = await getProviderCredentials("claude", null, "opus", {
+      allowedConnectionIds: new Set(["claude-2"]),
+    });
+
+    expect(result.connectionId).toBe("claude-2");
   });
 
   it("returns the no-auth virtual credential without querying stored connections", async () => {

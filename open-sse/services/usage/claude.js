@@ -22,37 +22,73 @@ const oauthCooldown = new Map();
 // Dedup + short TTL cache per access token. Many tabs / many accounts / auto-refresh
 // all funnel through here; without this each call hits Anthropic and triggers 429.
 const USAGE_CACHE_TTL_MS = 300000;
-const usageCache = new Map(); // token -> { promise } | { result, expiresAt }
+const usageCache = new Map(); // token -> { promise } | { result, observedAt, expiresAt, stale? }
 
-export async function getClaudeUsage(accessToken, proxyOptions = null, options = {}) {
+export async function getClaudeUsageObservation(accessToken, proxyOptions = null, options = {}) {
   const force = options?.force === true;
+  const hit = accessToken ? usageCache.get(accessToken) : null;
 
   // Serve in-flight or fresh cached result (skip on manual force)
-  if (!force && accessToken) {
-    const hit = usageCache.get(accessToken);
-    if (hit?.promise) return hit.promise;
-    if (hit && hit.expiresAt > Date.now()) return hit.result;
+  if (!force && hit?.promise) {
+    return hit.promise;
+  }
+  if (!force && hit?.result && hit.expiresAt > Date.now()) {
+    return {
+      result: hit.result,
+      observedAt: hit.observedAt,
+      source: hit.stale === true ? "stale" : "cache",
+      stale: hit.stale === true,
+    };
   }
 
-  const stale = (!force && accessToken && usageCache.get(accessToken)?.result) || null;
+  const staleEntry = !force && hit?.result ? hit : null;
 
   const promise = (async () => {
     const result = await fetchClaudeUsageRaw(accessToken, proxyOptions);
-    // Only cache real quota data, not soft-failure {message: ...} payloads
-    if (accessToken && result?.quotas) {
-      usageCache.set(accessToken, {
-        result,
-        expiresAt: Date.now() + USAGE_CACHE_TTL_MS,
-      });
-      return result;
+    // Only record a fresh observation for real quota data, not soft failures.
+    if (result?.quotas) {
+      const observedAt = new Date().toISOString();
+      if (accessToken) {
+        usageCache.set(accessToken, {
+          result,
+          observedAt,
+          expiresAt: Date.now() + USAGE_CACHE_TTL_MS,
+        });
+      }
+      return { result, observedAt, source: "upstream", stale: false };
     }
-    // Soft failure (429/error): prefer the last good read over a transient error
-    if (stale) return stale;
-    return result;
+    // Soft failure (429/error): prefer the last good read with its original time.
+    if (staleEntry) {
+      if (accessToken) {
+        usageCache.set(accessToken, {
+          ...staleEntry,
+          stale: true,
+          expiresAt: Date.now() + OAUTH_429_COOLDOWN_MS,
+        });
+      }
+      return {
+        result: staleEntry.result,
+        observedAt: staleEntry.observedAt,
+        source: "stale",
+        stale: true,
+      };
+    }
+    return { result, observedAt: null, source: "upstream", stale: false };
   })();
 
   if (accessToken) usageCache.set(accessToken, { promise });
-  return promise;
+  try {
+    return await promise;
+  } finally {
+    // A thrown fetch must not leave a rejected in-flight promise cached.
+    if (accessToken && usageCache.get(accessToken)?.promise === promise) {
+      usageCache.delete(accessToken);
+    }
+  }
+}
+
+export async function getClaudeUsage(accessToken, proxyOptions = null, options = {}) {
+  return (await getClaudeUsageObservation(accessToken, proxyOptions, options)).result;
 }
 
 async function fetchClaudeUsageRaw(accessToken, proxyOptions = null) {

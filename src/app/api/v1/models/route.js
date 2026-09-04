@@ -568,6 +568,15 @@ export async function OPTIONS() {
   });
 }
 
+export async function resolveModelsRequestRoutingContext(request) {
+  const apiKey = extractApiKey(request);
+  const settings = await getSettings();
+  return resolveApiKeyRoutingContext({
+    apiKey,
+    requireApiKey: !!settings.requireApiKey,
+  });
+}
+
 /**
  * GET /v1/models - OpenAI compatible models list (LLM/chat models only by default).
  * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web).
@@ -576,12 +585,7 @@ export async function GET(request) {
   try {
     // Detect cross-instance recursive /models fetch (another 9router fetching our /models)
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
-    const apiKey = extractApiKey(request);
-    const settings = await getSettings();
-    const routingContext = await resolveApiKeyRoutingContext({
-      apiKey,
-      requireApiKey: !!settings.requireApiKey,
-    });
+    const routingContext = await resolveModelsRequestRoutingContext(request);
     if (!routingContext.ok) return errorResponse(routingContext.status, routingContext.message);
 
     const data = await buildModelsList([LLM_KIND], { skipDynamicFetch, routingContext });

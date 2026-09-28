@@ -4,7 +4,8 @@ vi.mock("open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: vi.fn(),
 }));
 
-vi.mock("open-sse/providers/shared.js", () => ({
+vi.mock("open-sse/providers/shared.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   ANTHROPIC_API_VERSION: "2023-06-01",
 }));
 

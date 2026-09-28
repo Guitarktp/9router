@@ -67,7 +67,10 @@ vi.mock("open-sse/utils/bypassHandler.js", () => ({
 vi.mock("@/lib/headroom/detect", () => ({ DEFAULT_HEADROOM_URL: "http://headroom.test" }));
 vi.mock("@/lib/pxpipe/loader.js", () => ({ getTransform: vi.fn(() => null) }));
 vi.mock("@/lib/pxpipe/events.js", () => ({ appendPxpipeEvent: vi.fn() }));
-vi.mock("open-sse/translator/formats.js", () => ({ detectFormatByEndpoint: vi.fn(() => "openai") }));
+vi.mock("open-sse/translator/formats.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  detectFormatByEndpoint: vi.fn(() => "openai"),
+}));
 vi.mock("@/sse/services/tokenRefresh.js", () => ({
   checkAndRefreshToken: mocks.checkAndRefreshToken,
   updateProviderCredentials: vi.fn(),

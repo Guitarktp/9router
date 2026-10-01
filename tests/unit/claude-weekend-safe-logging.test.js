@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getExecutor: vi.fn(),
   getProviderConnectionById: vi.fn(),
   updateProviderConnection: vi.fn(),
+  Agent: vi.fn(),
   ProxyAgent: vi.fn(),
 }));
 
@@ -32,6 +33,7 @@ vi.mock("@/shared/constants/providers", () => ({
 }));
 
 vi.mock("undici", () => ({
+  Agent: mocks.Agent,
   ProxyAgent: mocks.ProxyAgent,
 }));
 

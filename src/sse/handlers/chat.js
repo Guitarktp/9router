@@ -150,7 +150,18 @@ export async function handleChat(request, clientRawRequest = null) {
     });
   }
 
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, routingContext);
+  const requestedModel = contextMarker
+    ? `${modelStr.slice(modelStr.indexOf("/") + 1)}[${contextMarker}]`
+    : null;
+  return handleSingleModelChat(
+    body,
+    modelStr,
+    clientRawRequest,
+    request,
+    apiKey,
+    routingContext,
+    requestedModel,
+  );
 }
 
 function emptyComboResponse(context, comboName) {
@@ -241,7 +252,15 @@ async function handleResolvedCombo({
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, routingContext) {
+async function handleSingleModelChat(
+  body,
+  modelStr,
+  clientRawRequest,
+  request,
+  apiKey,
+  routingContext,
+  requestedModel = null,
+) {
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
@@ -288,7 +307,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest, request, 
       provider,
       excludeConnectionIds,
       model,
-      { allowedConnectionIds },
+      {
+        allowedConnectionIds,
+        requestedModel: requestedModel || model,
+      },
     );
 
     // All accounts unavailable
@@ -354,6 +376,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest, request, 
       pxpipeTransform: chatSettings.pxpipeEnabled ? await getPxpipeTransform() : null,
       onPxpipeEvent: appendPxpipeEvent,
       providerThinking,
+      // Per-provider user overrides (custom headers / connect timeout) from settings
+      providerOverrides: (chatSettings.providerOverrides || {})[provider] || null,
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
       onCredentialsRefreshed: async (newCreds) => {

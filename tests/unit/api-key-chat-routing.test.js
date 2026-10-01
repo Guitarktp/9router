@@ -206,6 +206,26 @@ describe("API key chat provider routing", () => {
     expect(mocks.handleChatCore).toHaveBeenCalledWith(expect.objectContaining({ apiKey: "sk-pegasus" }));
   });
 
+  it("preserves the context marker while applying the API-key connection subset", async () => {
+    mocks.resolveContext.mockResolvedValue({
+      ...restricted(["codex"]),
+      activeConnections: { codex: ["codex-extended"] },
+    });
+
+    const response = await handleChat(chatRequest({ model: "cx/gpt-6-astra[1m]" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.getProviderCredentials).toHaveBeenCalledWith(
+      "codex",
+      expect.any(Set),
+      "gpt-6-astra",
+      expect.objectContaining({
+        allowedConnectionIds: new Set(["codex-extended"]),
+        requestedModel: "gpt-6-astra[1m]",
+      }),
+    );
+  });
+
   it("uses the selected subset on every retry", async () => {
     mocks.resolveContext.mockResolvedValue({
       ...restricted(["claude"]),
@@ -369,7 +389,7 @@ describe("API key chat provider routing", () => {
       "claude",
       expect.any(Set),
       "a",
-      { allowedConnectionIds: null },
+      expect.objectContaining({ allowedConnectionIds: null }),
     );
   });
 
@@ -422,14 +442,14 @@ describe("API key chat provider routing", () => {
       "claude",
       expect.any(Set),
       "a",
-      { allowedConnectionIds: null },
+      expect.objectContaining({ allowedConnectionIds: null }),
     );
     expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(
       2,
       "claude",
       expect.any(Set),
       "b",
-      { allowedConnectionIds: null },
+      expect.objectContaining({ allowedConnectionIds: null }),
     );
     expect(
       mocks.getProviderCredentials.mock.calls.some(([provider]) => provider === "codex"),
